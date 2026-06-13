@@ -214,22 +214,18 @@ def render_ml_columns_required_message(df: pd.DataFrame | None = None) -> None:
 
     st.markdown(
 
-        "1. Open **Predict new** in the sidebar (under Model tools).\n"
+        "1. Open the **MDI Train & Predict** app (`ml_app/`) on raw or partial customs data.\n"
 
-        "2. Upload the same CSV (raw customs or standardized features are fine).\n"
+        "2. Run prediction — it fills **BRAND NAME**, **SUPPLIER**, and **TYPE**.\n"
 
-        "3. Run prediction — the app will fill **BRAND NAME**, **SUPPLIER**, and **TYPE**.\n"
-
-        "4. Download the result, then in Import Analytics choose **Upload new file** "
-        "and click **Update data** to merge into your MDI/TDI dataset (same as default file updates)."
+        "3. Download the CSV, then here choose **Upload new file → Update data** to merge."
 
     )
 
-    if st.button("Go to Predict new", type="primary", key="goto_predict_from_analysis"):
-
-        st.session_state.nav_page = "predict"
-
-        st.rerun()
+    st.info(
+        "Data Analysis and Train/Predict are separate apps. "
+        "Upload the prediction CSV from the ML app — no link between the two processes."
+    )
 
 
 
@@ -354,6 +350,9 @@ def apply_data_source_selection(dataset_mode: str, hs_codes: list[str] | None = 
             set_dataframe(merged_df, dataset_label)
 
             st.session_state.dash_last_merge_token = upload_token
+            from ui.upload_preview_panel import clear_upload_preview_cache
+
+            clear_upload_preview_cache()
             unmapped = find_unmapped_customers(merged_df)
             st.session_state.dash_unmapped_customers = unmapped
 

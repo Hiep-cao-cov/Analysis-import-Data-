@@ -192,6 +192,7 @@ def _migrate_legacy_analysis_filter_keys() -> None:
 def sync_dataset_mode_from_sidebar() -> bool:
     """
     Apply the Dataset selectbox (sidebar_analysis_mode) to analysis_mode before data load.
+    Call before the selectbox is drawn — never write sidebar_analysis_mode here (widget owns it).
     Returns True when the active dataset changed.
     """
     options = list(ANALYSIS_DATASET_OPTIONS.keys())
@@ -199,15 +200,11 @@ def sync_dataset_mode_from_sidebar() -> bool:
         st.session_state.get("sidebar_analysis_mode", "MDI")
     )
     if selected not in options:
-        st.session_state.sidebar_analysis_mode = _normalize_analysis_dataset_mode(
-            st.session_state.get("analysis_mode", "MDI")
-        )
         return False
     current = _normalize_analysis_dataset_mode(st.session_state.get("analysis_mode", "MDI"))
     if selected == current:
         return False
     st.session_state.analysis_mode = selected
-    st.session_state.sidebar_analysis_mode = selected
     st.session_state.dashboard_df = None
     st.session_state.dashboard_source = None
     st.session_state.active_df = None
@@ -228,6 +225,9 @@ def _reset_analysis_filters_for_dataset_change() -> None:
     ):
         st.session_state.pop(key, None)
     st.session_state.pop(_FILTER_DATASET_SIG_KEY, None)
+    from ui.upload_preview_panel import clear_upload_preview_cache
+
+    clear_upload_preview_cache()
 
 
 def _sync_material_type_for_dataset() -> None:
@@ -488,11 +488,15 @@ def render_shared_data_sidebar() -> None:
 
         _reset_analysis_filters_for_dataset_change()
 
+        from ui.upload_preview_panel import clear_upload_preview_cache
+
+        clear_upload_preview_cache()
+
 
 
     if source_mode == "Upload new file":
 
-        st.file_uploader(
+        uploaded = st.file_uploader(
 
             "Upload CSV / Excel",
 
@@ -502,8 +506,17 @@ def render_shared_data_sidebar() -> None:
 
         )
 
-        if st.button("Update data", key="dash_update_data_btn", use_container_width=True):
+        from ui.upload_preview_panel import render_upload_preview_panel
 
+        merge_ready = render_upload_preview_panel(uploaded)
+
+        if st.button(
+            "Update data",
+            key="dash_update_data_btn",
+            use_container_width=True,
+            disabled=not merge_ready,
+            help="Enabled when the upload passes column checks and is not already merged.",
+        ):
             st.session_state.dash_merge_requested = True
 
     with st.expander("Customer short names", expanded=False):
@@ -551,11 +564,6 @@ def render_analysis_sidebar() -> str:
     render_market_overview_filters()
     render_supplier_overview_filters()
     render_customer_overview_filters()
-
-    with st.expander(":red[Model tools]", expanded=False):
-        render_ml_tools_section()
-
-
 
     return st.session_state.get("analysis_subtab", "market")
 

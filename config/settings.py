@@ -11,22 +11,11 @@ DEFAULT_DATASETS_DIR = PROJECT_ROOT / "app_data"
 TEMP_DIR = PROJECT_ROOT / "temp"
 # App reference files (blacklists, customer list, rules) — not user datasets
 APP_CONFIG_DIR = PROJECT_ROOT / "app_config"
-MODELS_DIR = PROJECT_ROOT / "models"
-MDI_MODEL_DIR = MODELS_DIR / "MDI_production_material_predictor_muilti"
-TDI_MODEL_DIR = MODELS_DIR / "TDI_production_material_predictor_muilti"
-DEFAULT_MODEL_DIR = MDI_MODEL_DIR
-
-# Saved models for Predict new — folders under models/
-PREDICTION_MODEL_OPTIONS = {
-    "PMDI": MDI_MODEL_DIR,
-    "TDI": TDI_MODEL_DIR,
-}
 
 DATA_DIR.mkdir(exist_ok=True)
 DEFAULT_DATASETS_DIR.mkdir(exist_ok=True)
 TEMP_DIR.mkdir(exist_ok=True)
 APP_CONFIG_DIR.mkdir(exist_ok=True)
-MODELS_DIR.mkdir(exist_ok=True)
 
 # ── ETL ────────────────────────────────────────────────────────────────────
 UNWANTED_COLS = [
@@ -340,10 +329,6 @@ SUPPLIER_COMPARE_FALLBACK_COLORS = [
     "#FBBF24",
 ]
 
-DEFAULT_TRAIN_DATASET = DEFAULT_DATASETS_DIR / DEFAULT_DATASET_FILENAMES["MDI"]
-DEFAULT_ANALYSIS_DATASET = DEFAULT_TRAIN_DATASET
-DEFAULT_ANALYSIS_DATASET_PMDI = DEFAULT_DATASETS_DIR / DEFAULT_DATASET_FILENAMES["MDI"]
-DEFAULT_ANALYSIS_DATASET_TDI = DEFAULT_DATASETS_DIR / DEFAULT_DATASET_FILENAMES["TDI"]
 DEFAULT_RAW_DATASET = DATA_DIR / "raw_mdi_q1_2026.csv"
 DEFAULT_INFERENCE_DATASET = DATA_DIR / "raw_mdi_q1_2026_dataset.csv"
 
@@ -376,11 +361,3 @@ ML_COLUMN_CONFIG = {
     "type_col": COL_TYPE,
     "supplier_col": COL_SUPPLIER,
 }
-
-DEFAULT_TRAIN_EPOCHS = 40
-DEFAULT_RANDOM_STATE = 42
-DEFAULT_MIN_SAMPLES_PER_CLASS = 5
-DEFAULT_RARE_CLASS_LABEL = UNKNOWN_BRAND_LABEL
-DEFAULT_N_FOLDS = 5
-DEFAULT_MULTITASK_AUX_WEIGHT = 0.4
-DEFAULT_TRAIN_BATCH_SIZE = 128

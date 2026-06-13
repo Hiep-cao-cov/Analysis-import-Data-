@@ -28,6 +28,10 @@ _PREDICTION_ALIASES: dict[str, str] = {
 
 REQUIRED_ML_TARGET_COLUMNS = (COL_BRAND_NAME, COL_SUPPLIER, COL_TYPE)
 
+# Prediction export / merge columns (analysis ingests ML app CSV without importing predict code)
+MARK_FOR_DELETE_COL = "marked_for_delete"
+DELETE_REASON_COL = "delete_reason"
+
 EXPORT_PRESERVE_PREFIX = "_preserve__"
 
 # Keep ETL-standardized values in prediction export (do not restore pre-ETL snapshots).
@@ -183,8 +187,6 @@ def prepare_dataset_for_storage(df: pd.DataFrame) -> pd.DataFrame:
     """Remove internal, duplicate, and predict-only columns before saving CSV."""
     from config.settings import COL_BRAND_NAME, COL_TYPE, PREDICT_CONFIDENCE_COLUMNS
     from services.brand_labels import should_mark_unknown_brand_row
-    from services.ml_columns import find_column
-    from services.predict_prepare import DELETE_REASON_COL, MARK_FOR_DELETE_COL
 
     out = df.copy()
     if MARK_FOR_DELETE_COL in out.columns:
