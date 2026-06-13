@@ -190,6 +190,77 @@ APP_REFERENCE_DATA_FILENAMES = frozenset(
 
 CUSTOMER_LIST_FILE = APP_CONFIG_DIR / "customer_list.csv"
 
+# ── Saler name standardization (ETL + ingest) ────────────────────────────────
+# Map trading-partner variants → one canonical name in column `saler`.
+#
+# Keys   = canonical saler label saved in the dataset (edit display spelling here).
+# Values = optional alias strings; add any spelling you see in customs exports.
+#
+# Matching steps:
+#   1. Normalize each name (lowercase, remove punctuation, collapse spaces).
+#   2. Look up normalized text in this map (+ aliases below).
+#   3. Unmatched values are kept as-is (trimmed only).
+#
+# Example — these three become one saler:
+#   "wanhua chemical (ningbo) trading co., ltd"
+#   "wanhua chemical(ningbo) trading co.,ltd"
+#   "WANHUA CHEMICAL NINGBO TRADING CO LTD"
+
+SALER_NAME_MAP: dict[str, list[str]] = {
+    "WANHUA CHEMICAL (NINGBO) TRADING": [
+        "wanhua chemical(ningbo) trading co.,ltd",
+        "WANHUA CHEMICAL (NINGBO) TRADING CO.,LTD",
+        "WANHUA CHEMICAL NINGBO TRADING CO LTD",
+        "WANHUA CHEMICAL ( NINGBO ) TRADING CO., LTD",
+        "WANHUA CHEMICAL (NINGBO) TRADING CO. ,LTD",
+        "WANHUA CHEMICAL (NINGBO)TRADING CO., LTD",
+        "WANHUA CHEMICAL (NINGBO) TRADING CO., LTD.",
+        "WANHUA CHEMICAL (NINGBO) TRADING CO., LTD",
+        "WANHUA CHEMICAL (NINGBO) TRADING CO.,LTD."
+    ],
+    "IVICT(SINGAPORE)": [
+        "ivict (singapore) pte.ltd",
+        "IVICT(SINGAPORE) PTE. LTD",
+        "IVICT ( SINGAPORE) PTE.LTD",
+        "IVICT (SINGAPORE) PTE. LTD.",
+        "IVICT (SINGAPORE) PTE, LTD",
+        "IVICT (SINGAPORE) PTE.LTD.",
+        "IVICT ( SINGAPORE ) PTE. LTD.",
+        "IVICT (SINGAPORE) PTE. LTD",
+        "IVICT( SINGAPORE) PTE.LTD",
+        "IVICT(SINGAPORE) PTE.LTD.",
+        "IVICT(SINGAPORE) PTE. LTD."        
+    ],
+    "TOYOTA TSUSHO ASIA": [
+        "toyota tsusho asia pacific pte ltd",
+        "TOYOTA TSUSHO ASIA PACIFIC PTE. LTD",
+        "TOYOTA TSUSHO ASIA PACIFIC PTE, LTD.",
+        "TOYOTA TSUSHO ASIA PACIFIC PTE.LTD.",
+        "TOYOTA TSUSHO ASIA PACIFIC PTE.LTD",
+        "TOYOTA TSUSHO ASIA PACIFIC PTE. LTD.",
+        "TOYOTA TSUSHO ASIA PACIFIC PTE LTD"      
+    ],
+    "TOSOH ASIA": [
+        "tosoh asia pte.ltd",
+        "TOSOH ASIA PTE LTD",
+        "TOSOH ASIA PTE.LTD.",
+        "TOSOH ASIA PTE. LTD.",
+        "TOSOH ASIA PTE.LTD",
+        "TOSOH ASIA PTE LTD."
+        
+    ],
+    "CHORI (SINGAPORE)": [
+        "chori singapore pte ltd",
+        "CHORI (SINGAPORE) PTE.LTD.",
+        "CHORI SINGAPORE PTE LTD.",
+        "CHORI SINGAPORE PTE LTD"
+    ],
+    "Công ty TNHH Covestro (Việt Nam)": [
+        "cong ty tnhh covestro (viet nam)",
+        "cong ty tnhh covestro (vietnam)",
+    ],
+}
+
 # App seed dataset filenames (full files live in DEFAULT_DATASETS_DIR / app_data)
 DEFAULT_DATASET_FILENAMES = {
     "MDI": "final_pmdi_2022_2025_30_may.csv",

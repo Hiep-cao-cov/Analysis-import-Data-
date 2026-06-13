@@ -293,6 +293,7 @@ def render_customer_page(df: pd.DataFrame, dataset_label: str) -> None:
         sale_channel_options=SALE_CHANNEL_FILTER_OPTIONS,
         year=year,
         customer_name=customer_name,
+        show_customer=st.session_state.get("cust_view_mode", "Single customer") != "Compare customers",
     )
 
     type_col = resolve_type_column(df)

@@ -15,6 +15,7 @@ from ui.chart_volume import (
     MONTH_DISPLAY,
     build_supplier_customer_new_current_data,
     build_supplier_top_customers_data,
+    build_supplier_top_salers_data,
     format_dataset_year_range,
     render_monthly_supplier_market_volume_chart,
     render_quarterly_supplier_market_volume_chart,
@@ -22,6 +23,7 @@ from ui.chart_volume import (
     render_supplier_customer_new_current_stacked_chart,
     render_supplier_period_customer_volume_chart,
     render_supplier_top_customers_chart,
+    render_supplier_top_salers_chart,
     render_yearly_supplier_market_volume_chart,
     supplier_color_map_for_material,
 )
@@ -30,6 +32,7 @@ from ui.sidebar_analysis import get_analysis_subtab_label
 from ui.theme import (
     dashboard_header,
     format_customer_display_name,
+    format_saler_display_name,
     format_supplier_display_name,
     format_supplier_sale_kpi_label,
     kpi_card,
@@ -321,6 +324,7 @@ def render_supplier_page(df: pd.DataFrame, dataset_label: str) -> None:
         sale_channel_options=SALE_CHANNEL_FILTER_OPTIONS,
         year=year,
         supplier=supplier,
+        show_supplier=st.session_state.get("sup_view_mode", "Single supplier") != "Compare suppliers",
     )
 
     year_int = int(year)
@@ -364,13 +368,20 @@ def render_supplier_page(df: pd.DataFrame, dataset_label: str) -> None:
         period_scope,
         top_n=top_customers_n,
     )
+    salers_chart_df, n_salers = build_supplier_top_salers_data(
+        top_customers_scope,
+        top_n=top_customers_n,
+    )
     total_ton = float(period_scope["volume_ton"].sum()) if not period_scope.empty else 0.0
     top_row = customers_chart_df.iloc[0] if not customers_chart_df.empty else None
     top_pct = float(top_row["share_pct"]) if top_row is not None else 0.0
     top_name = str(top_row["customer_label"]) if top_row is not None else "—"
+    top_saler_row = salers_chart_df.iloc[0] if not salers_chart_df.empty else None
+    top_saler_pct = float(top_saler_row["share_pct"]) if top_saler_row is not None else 0.0
+    top_saler_name = str(top_saler_row["saler_label"]) if top_saler_row is not None else "—"
 
     if not compare_mode:
-        m1, m2, m3 = st.columns(3)
+        m1, m2, m3, m4, m5 = st.columns(5)
         with m1:
             if period_mode == "Yearly":
                 year_span = format_dataset_year_range(period_scope) or "period"
@@ -405,6 +416,20 @@ def render_supplier_page(df: pd.DataFrame, dataset_label: str) -> None:
                 f"{top_pct:.1f}%",
                 f"Largest buyer · {format_customer_display_name(top_name, max_len=28)}",
                 "◈",
+                icon_class="gray",
+            )
+        with m4:
+            kpi_card(
+                f"{n_salers:,}",
+                f"Salers in {year_int}",
+                "◆",
+                icon_class="blue",
+            )
+        with m5:
+            kpi_card(
+                f"{top_saler_pct:.1f}%",
+                f"Largest saler · {format_saler_display_name(top_saler_name, max_len=24)}",
+                "◇",
                 icon_class="gray",
             )
 
@@ -445,6 +470,7 @@ def render_supplier_page(df: pd.DataFrame, dataset_label: str) -> None:
         year_int=year_int,
         top_n=top_customers_n,
     )
+    top_salers_kwargs = dict(top_customers_kwargs)
 
     if compare_mode:
         render_supplier_compare_dashboard(
@@ -569,6 +595,7 @@ def render_supplier_page(df: pd.DataFrame, dataset_label: str) -> None:
                     )
         with col_top_customers:
             render_supplier_top_customers_chart(**top_customers_kwargs, side_panel=True)
+            render_supplier_top_salers_chart(**top_salers_kwargs, side_panel=True)
 
     if st.session_state.get("show_detail_data", False) and not compare_mode:
         if period_scope.empty:

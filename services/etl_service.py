@@ -19,6 +19,7 @@ from services.data_process import (
 from services.description_blacklist import get_description_blacklist_terms
 from services.ml_columns import normalize_ml_column_names
 from services.customer_name_service import apply_customer_short_names
+from services.saler_name_service import apply_saler_name_standardization
 from services.sale_channel_service import add_sale_channel_column
 
 
@@ -70,6 +71,7 @@ def run_etl(
 
     df = normalize_ml_column_names(df)
     df = apply_customer_short_names(df)
+    df = apply_saler_name_standardization(df)
     df = df.reset_index(drop=True)
 
     if save_path:

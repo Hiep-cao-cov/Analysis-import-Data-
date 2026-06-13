@@ -16,7 +16,14 @@ from services.analysis_service import (
 )
 from services.customer_name_service import normalize_customer_id
 from services.supplier_filter_service import supplier_filter_key
-from ui.theme import CHART, chart_card_title, chart_footnote, format_customer_display_name, format_supplier_display_name
+from ui.theme import (
+    CHART,
+    chart_card_title,
+    chart_footnote,
+    format_customer_display_name,
+    format_saler_display_name,
+    format_supplier_display_name,
+)
 
 
 def format_dataset_year_range(df: pd.DataFrame) -> str:
@@ -777,20 +784,6 @@ def build_multi_supplier_period_metrics(
     return metrics_df, period_keys, period_labels
 
 
-def build_supplier_compare_snapshot(
-    metrics_df: pd.DataFrame,
-    period_keys: list[str],
-) -> pd.DataFrame:
-    """Ranked supplier table for the latest period in the comparison window."""
-    if metrics_df.empty or not period_keys:
-        return pd.DataFrame(columns=["rank", "supplier", "volume_ton", "share_pct"])
-    latest = str(period_keys[-1])
-    snap = metrics_df[metrics_df["period"].astype(str) == latest].copy()
-    snap = snap.sort_values(["volume_ton", "supplier"], ascending=[False, True])
-    snap["rank"] = range(1, len(snap) + 1)
-    return snap[["rank", "supplier", "volume_ton", "share_pct"]].reset_index(drop=True)
-
-
 def _supplier_series_by_period(
     metrics_df: pd.DataFrame,
     *,
@@ -1000,40 +993,6 @@ def render_supplier_compare_share_chart(
     st.plotly_chart(fig, use_container_width=True, key="sup_compare_share_chart")
 
 
-def render_supplier_compare_summary_table(
-    snapshot_df: pd.DataFrame,
-    *,
-    period_caption: str,
-    material_type: str,
-    sale_channel: str,
-) -> None:
-    """Ranked snapshot table for the latest period in the comparison."""
-    import streamlit as st
-
-    mt_label = str(material_type).strip()
-    chart_card_title(
-        f"Latest period snapshot · {period_caption} · {mt_label} · {sale_channel}",
-        large=True,
-    )
-    if snapshot_df.empty:
-        st.info("No comparison data for the latest period.")
-        return
-
-    display = snapshot_df.copy()
-    display["supplier"] = display["supplier"].map(format_supplier_display_name)
-    display["volume_ton"] = display["volume_ton"].map(lambda v: f"{v:,.1f}")
-    display["share_pct"] = display["share_pct"].map(lambda v: f"{v:.1f}%")
-    display = display.rename(
-        columns={
-            "rank": "Rank",
-            "supplier": "Supplier",
-            "volume_ton": "Volume (ton)",
-            "share_pct": "Share",
-        }
-    )
-    st.dataframe(display, hide_index=True, use_container_width=True)
-
-
 def render_supplier_compare_dashboard(
     df: pd.DataFrame,
     *,
@@ -1046,7 +1005,7 @@ def render_supplier_compare_dashboard(
     sale_channel: str,
     supplier_color_map: dict[str, str],
 ) -> None:
-    """Compare mode: snapshot table + grouped volume bars + share lines."""
+    """Compare mode: grouped volume bars + share lines."""
     if period_mode == "Yearly":
         period_col = "year"
         period_order = None
@@ -1077,21 +1036,6 @@ def render_supplier_compare_dashboard(
         st.warning("No comparison data for the selected filters and suppliers.")
         return
 
-    latest_label = period_labels[-1] if period_labels else "—"
-    if period_mode == "Quarterly":
-        snapshot_caption = f"{latest_label} {year_int}"
-    elif period_mode == "Monthly":
-        snapshot_caption = f"{latest_label} {year_int}"
-    else:
-        snapshot_caption = latest_label
-
-    snapshot_df = build_supplier_compare_snapshot(metrics_df, period_keys)
-    render_supplier_compare_summary_table(
-        snapshot_df,
-        period_caption=snapshot_caption,
-        material_type=material_type,
-        sale_channel=sale_channel,
-    )
     render_supplier_compare_volume_chart(
         metrics_df,
         suppliers=suppliers,
@@ -1892,19 +1836,6 @@ def build_multi_customer_period_metrics(
     return metrics_df, period_keys, period_labels
 
 
-def build_customer_compare_snapshot(
-    metrics_df: pd.DataFrame,
-    period_keys: list[str],
-) -> pd.DataFrame:
-    if metrics_df.empty or not period_keys:
-        return pd.DataFrame(columns=["rank", "customer_id", "volume_ton", "share_pct"])
-    latest = str(period_keys[-1])
-    snap = metrics_df[metrics_df["period"].astype(str) == latest].copy()
-    snap = snap.sort_values(["volume_ton", "customer_id"], ascending=[False, True])
-    snap["rank"] = range(1, len(snap) + 1)
-    return snap[["rank", "customer_id", "volume_ton", "share_pct"]].reset_index(drop=True)
-
-
 def _customer_series_by_period(
     metrics_df: pd.DataFrame,
     *,
@@ -2123,44 +2054,6 @@ def render_customer_compare_share_chart(
     st.plotly_chart(fig, use_container_width=True, key="cust_compare_share_chart")
 
 
-def render_customer_compare_summary_table(
-    snapshot_df: pd.DataFrame,
-    *,
-    period_caption: str,
-    material_type: str,
-    sale_channel: str,
-    id_to_name: dict[str, str],
-) -> None:
-    mt_label = str(material_type).strip()
-    chart_card_title(
-        f"Latest period snapshot · {period_caption} · {mt_label} · {sale_channel}",
-        large=True,
-    )
-    if snapshot_df.empty:
-        st.info("No comparison data for the latest period.")
-        return
-
-    display = snapshot_df.copy()
-    display["customer"] = display["customer_id"].map(
-        lambda cid: format_customer_display_name(id_to_name.get(str(cid), str(cid)))
-    )
-    display["volume_ton"] = display["volume_ton"].map(lambda v: f"{v:,.1f}")
-    display["share_pct"] = display["share_pct"].map(lambda v: f"{v:.1f}%")
-    display = display.rename(
-        columns={
-            "rank": "Rank",
-            "customer": "Customer",
-            "volume_ton": "Volume (ton)",
-            "share_pct": "Share",
-        }
-    )
-    st.dataframe(
-        display[["Rank", "Customer", "Volume (ton)", "Share"]],
-        hide_index=True,
-        use_container_width=True,
-    )
-
-
 def render_customer_compare_dashboard(
     df: pd.DataFrame,
     *,
@@ -2203,22 +2096,6 @@ def render_customer_compare_dashboard(
         st.warning("No comparison data for the selected filters and customers.")
         return
 
-    latest_label = period_labels[-1] if period_labels else "—"
-    if period_mode == "Quarterly":
-        snapshot_caption = f"{latest_label} {year_int}"
-    elif period_mode == "Monthly":
-        snapshot_caption = f"{latest_label} {year_int}"
-    else:
-        snapshot_caption = latest_label
-
-    snapshot_df = build_customer_compare_snapshot(metrics_df, period_keys)
-    render_customer_compare_summary_table(
-        snapshot_df,
-        period_caption=snapshot_caption,
-        material_type=material_type,
-        sale_channel=sale_channel,
-        id_to_name=id_to_name,
-    )
     render_customer_compare_volume_chart(
         metrics_df,
         customer_ids=customer_ids,
@@ -2395,6 +2272,139 @@ def render_supplier_top_customers_chart(
         yaxis=dict(title="", autorange="reversed"),
     )
     st.plotly_chart(fig, use_container_width=True, key="sup_top_customers_chart")
+
+
+def build_supplier_top_salers_data(
+    df: pd.DataFrame,
+    *,
+    top_n: int,
+    others_label: str = "Others",
+) -> tuple[pd.DataFrame, int]:
+    """
+    Rank salers (trading partners) by volume within a supplier-period scope.
+    Returns (chart_df with saler_label, volume_ton, share_pct), total_unique_salers.
+    """
+    empty = pd.DataFrame(columns=["saler_label", "volume_ton", "share_pct"])
+    if df.empty or "volume_ton" not in df.columns or "saler" not in df.columns:
+        return empty, 0
+
+    work = df.copy()
+    work["saler"] = work["saler"].fillna("").astype(str).str.strip()
+    work = work[work["saler"] != ""]
+    if work.empty:
+        return empty, 0
+
+    grouped = (
+        work.groupby("saler", dropna=False)["volume_ton"]
+        .sum()
+        .reset_index()
+        .sort_values("volume_ton", ascending=False)
+    )
+    n_salers = len(grouped)
+    total = float(grouped["volume_ton"].sum())
+    if total <= 0:
+        return empty, n_salers
+
+    grouped["saler_label"] = grouped["saler"].map(format_saler_display_name)
+    top = grouped.head(top_n).copy()
+    top["share_pct"] = (top["volume_ton"] / total * 100).round(1)
+
+    others_vol = float(grouped.iloc[top_n:]["volume_ton"].sum()) if n_salers > top_n else 0.0
+    rows = top[["saler_label", "volume_ton", "share_pct"]].to_dict("records")
+    if others_vol > 0:
+        rows.append(
+            {
+                "saler_label": others_label,
+                "volume_ton": others_vol,
+                "share_pct": round(others_vol / total * 100, 1),
+            }
+        )
+
+    return pd.DataFrame(rows), n_salers
+
+
+def render_supplier_top_salers_chart(
+    df: pd.DataFrame,
+    *,
+    supplier: str,
+    material_type: str,
+    sale_channel: str,
+    year_int: int,
+    top_n: int,
+    side_panel: bool = False,
+    chart_key: str = "sup_top_salers_chart",
+    empty_message: str = "No saler volume for this supplier and year.",
+) -> None:
+    """Top salers by volume for sidebar year — same layout as Top customers."""
+    import plotly.graph_objects as go
+
+    from config.settings import SUPPLIER_TOP_CUSTOMERS_OTHERS_LABEL
+
+    supplier_name = format_supplier_display_name(supplier)
+    mt_label = str(material_type).strip()
+    chart_df, n_salers = build_supplier_top_salers_data(
+        df,
+        top_n=top_n,
+        others_label=SUPPLIER_TOP_CUSTOMERS_OTHERS_LABEL,
+    )
+
+    if side_panel:
+        chart_card_title(f"Top salers · Year {year_int}", large=True)
+        st.caption(
+            f"{supplier_name} · {mt_label} · {sale_channel} · "
+            f"{n_salers:,} salers · Top {top_n}"
+        )
+    else:
+        chart_card_title(
+            f"Top salers · {supplier_name} · {mt_label} · {sale_channel} · Year {year_int}",
+            large=True,
+        )
+        st.caption(f"{n_salers:,} salers in {year_int} · Top {top_n} shown")
+
+    if chart_df.empty:
+        st.info(empty_message)
+        return
+
+    labels = [
+        format_saler_display_name(lbl)
+        for lbl in chart_df["saler_label"].astype(str).tolist()
+    ]
+    colors = [
+        CUSTOMER_COMPARE_FALLBACK_COLORS[i % len(CUSTOMER_COMPARE_FALLBACK_COLORS)]
+        if str(raw) != SUPPLIER_TOP_CUSTOMERS_OTHERS_LABEL
+        else "#4B5563"
+        for i, raw in enumerate(chart_df["saler_label"].astype(str).tolist())
+    ]
+
+    fig = go.Figure(
+        go.Bar(
+            x=chart_df["volume_ton"].astype(float).tolist(),
+            y=labels,
+            orientation="h",
+            marker_color=colors,
+            text=[
+                f"{v:,.1f} ton · {p:.1f}%"
+                for v, p in zip(chart_df["volume_ton"], chart_df["share_pct"])
+            ],
+            textposition="inside" if side_panel else "outside",
+            textfont=dict(color="#E5E7EB", size=10 if side_panel else 11),
+            hovertemplate="%{y}<br>Volume: %{x:,.1f} ton<extra></extra>",
+        )
+    )
+    x_max = float(chart_df["volume_ton"].max()) * (1.15 if side_panel else 1.3) if not chart_df.empty else 1.0
+    chart_height = 460 if side_panel else max(280, 48 * len(labels) + 80)
+    fig.update_layout(
+        height=chart_height,
+        margin=dict(l=12, r=12 if side_panel else 60, t=12, b=20),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#E5E7EB"),
+        template="plotly_dark",
+        showlegend=False,
+        xaxis=dict(title="Volume (ton)", range=[0, x_max], tickformat=","),
+        yaxis=dict(title="", autorange="reversed"),
+    )
+    st.plotly_chart(fig, use_container_width=True, key=chart_key)
 
 
 def _customer_rank_bar_colors(labels: list[str], *, others_label: str) -> list[str]:

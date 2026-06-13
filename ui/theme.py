@@ -631,7 +631,7 @@ CUSTOM_CSS = f"""
     }}
     .top-chip-row {{
         display: flex;
-        gap: 0.45rem;
+        gap: 0;
         flex-wrap: wrap;
         margin: 0.15rem 0 0.7rem 0;
     }}
@@ -645,7 +645,7 @@ CUSTOM_CSS = f"""
         max-width: 7.5rem;
         height: 2.1rem;
         padding: 0 0.45rem;
-        border-radius: 999px;
+        border-radius: 0;
         font-size: 0.94rem;
         border: 1px solid #4B5563;
         color: #3B82F6;
@@ -655,10 +655,15 @@ CUSTOM_CSS = f"""
         text-overflow: ellipsis;
         white-space: nowrap;
     }}
+    .chip + .chip {{
+        margin-left: -1px;
+    }}
     .chip-active {{
         background: #1E40AF;
         border-color: #FACC15;
         color: #FDE047;
+        position: relative;
+        z-index: 1;
     }}
     .info-card {{
         background: {CARD_BG};
@@ -925,6 +930,21 @@ def format_customer_display_name(name: str, *, max_len: int = 48) -> str:
     return text[: max_len - 1].rstrip() + "…"
 
 
+def format_saler_display_name(name: str, *, max_len: int = 48) -> str:
+    """Display trading partner (saler) name; truncate long company names."""
+    text = str(name).strip()
+    if not text or text.lower() in ("nan", "none"):
+        return "Unknown"
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 1].rstrip() + "…"
+
+
+def format_supplier_salers_kpi_label(*, period_caption: str) -> str:
+    """Tab 2 saler count KPI, e.g. 'Salers in Q2 2025'."""
+    return f"Salers in {period_caption}"
+
+
 def format_customer_import_kpi_label(
     *,
     customer_name: str,
@@ -950,8 +970,9 @@ def render_analysis_chip_row(
     sale_channel_options: list[str],
     year: str | int,
     supplier: str,
+    show_supplier: bool = True,
 ) -> None:
-    """Top filter chips: dataset, sale channel, year, and supplier."""
+    """Top filter chips: dataset, sale channel, year, and optional supplier."""
     import html
 
     import streamlit as st
@@ -967,7 +988,8 @@ def render_analysis_chip_row(
     for channel in sale_channel_options:
         chips.append(_chip(channel, active=channel == sale_channel))
     chips.append(_chip(str(year), active=True))
-    chips.append(_chip(format_supplier_display_name(supplier), active=True))
+    if show_supplier:
+        chips.append(_chip(format_supplier_display_name(supplier), active=True))
 
     st.markdown(
         f'<div class="top-chip-row">{"".join(chips)}</div>',
@@ -982,8 +1004,9 @@ def render_customer_analysis_chip_row(
     sale_channel_options: list[str],
     year: str | int,
     customer_name: str,
+    show_customer: bool = True,
 ) -> None:
-    """Top filter chips for Tab 3: dataset, sale channel, year, and customer."""
+    """Top filter chips for Tab 3: dataset, sale channel, year, and optional customer."""
     import html
 
     import streamlit as st
@@ -999,9 +1022,10 @@ def render_customer_analysis_chip_row(
     for channel in sale_channel_options:
         chips.append(_chip(channel, active=channel == sale_channel))
     chips.append(_chip(str(year), active=True))
-    chips.append(
-        _chip(format_customer_display_name(customer_name, max_len=36), active=True)
-    )
+    if show_customer:
+        chips.append(
+            _chip(format_customer_display_name(customer_name, max_len=36), active=True)
+        )
 
     st.markdown(
         f'<div class="top-chip-row">{"".join(chips)}</div>',
