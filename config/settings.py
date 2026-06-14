@@ -191,75 +191,66 @@ APP_REFERENCE_DATA_FILENAMES = frozenset(
 CUSTOMER_LIST_FILE = APP_CONFIG_DIR / "customer_list.csv"
 
 # ── Saler name standardization (ETL + ingest) ────────────────────────────────
-# Map trading-partner variants → one canonical name in column `saler`.
+# General rules apply to every saler (column `saler`). Company-specific overrides are optional.
 #
-# Keys   = canonical saler label saved in the dataset (edit display spelling here).
-# Values = optional alias strings; add any spelling you see in customs exports.
+# Pipeline:
+#   1. Lowercase + fold accents (Công → cong)
+#   2. Remove (... ) blocks when inner text contains a keyword (e.g. MST)
+#   3. SALER_NAME_REGEX_REMOVE — strip legal suffixes / prefixes (general patterns)
+#   4. Remove SALER_NAME_STRIP_CHARACTERS ( . ( ) , etc. ) + collapse spaces
+#   5. Remove remaining punctuation → single spaces
+#   6. Optional SALER_NAME_REGEX_MAP — pattern → canonical (first match wins)
+#   7. Optional SALER_NAME_MAP — exact normalized key → canonical
+#   8. Otherwise keep cleaned lowercase text from step 5
 #
-# Matching steps:
-#   1. Normalize each name (lowercase, remove punctuation, collapse spaces).
-#   2. Look up normalized text in this map (+ aliases below).
-#   3. Unmatched values are kept as-is (trimmed only).
-#
-# Example — these three become one saler:
+# Example — these become one saler without naming Wanhua in a map:
 #   "wanhua chemical (ningbo) trading co., ltd"
 #   "wanhua chemical(ningbo) trading co.,ltd"
 #   "WANHUA CHEMICAL NINGBO TRADING CO LTD"
+#   → "wanhua chemical ningbo trading"
 
-SALER_NAME_MAP: dict[str, list[str]] = {
-    "WANHUA CHEMICAL (NINGBO) TRADING": [
-        "wanhua chemical(ningbo) trading co.,ltd",
-        "WANHUA CHEMICAL (NINGBO) TRADING CO.,LTD",
-        "WANHUA CHEMICAL NINGBO TRADING CO LTD",
-        "WANHUA CHEMICAL ( NINGBO ) TRADING CO., LTD",
-        "WANHUA CHEMICAL (NINGBO) TRADING CO. ,LTD",
-        "WANHUA CHEMICAL (NINGBO)TRADING CO., LTD",
-        "WANHUA CHEMICAL (NINGBO) TRADING CO., LTD.",
-        "WANHUA CHEMICAL (NINGBO) TRADING CO., LTD",
-        "WANHUA CHEMICAL (NINGBO) TRADING CO.,LTD."
-    ],
-    "IVICT(SINGAPORE)": [
-        "ivict (singapore) pte.ltd",
-        "IVICT(SINGAPORE) PTE. LTD",
-        "IVICT ( SINGAPORE) PTE.LTD",
-        "IVICT (SINGAPORE) PTE. LTD.",
-        "IVICT (SINGAPORE) PTE, LTD",
-        "IVICT (SINGAPORE) PTE.LTD.",
-        "IVICT ( SINGAPORE ) PTE. LTD.",
-        "IVICT (SINGAPORE) PTE. LTD",
-        "IVICT( SINGAPORE) PTE.LTD",
-        "IVICT(SINGAPORE) PTE.LTD.",
-        "IVICT(SINGAPORE) PTE. LTD."        
-    ],
-    "TOYOTA TSUSHO ASIA": [
-        "toyota tsusho asia pacific pte ltd",
-        "TOYOTA TSUSHO ASIA PACIFIC PTE. LTD",
-        "TOYOTA TSUSHO ASIA PACIFIC PTE, LTD.",
-        "TOYOTA TSUSHO ASIA PACIFIC PTE.LTD.",
-        "TOYOTA TSUSHO ASIA PACIFIC PTE.LTD",
-        "TOYOTA TSUSHO ASIA PACIFIC PTE. LTD.",
-        "TOYOTA TSUSHO ASIA PACIFIC PTE LTD"      
-    ],
-    "TOSOH ASIA": [
-        "tosoh asia pte.ltd",
-        "TOSOH ASIA PTE LTD",
-        "TOSOH ASIA PTE.LTD.",
-        "TOSOH ASIA PTE. LTD.",
-        "TOSOH ASIA PTE.LTD",
-        "TOSOH ASIA PTE LTD."
-        
-    ],
-    "CHORI (SINGAPORE)": [
-        "chori singapore pte ltd",
-        "CHORI (SINGAPORE) PTE.LTD.",
-        "CHORI SINGAPORE PTE LTD.",
-        "CHORI SINGAPORE PTE LTD"
-    ],
-    "Công ty TNHH Covestro (Việt Nam)": [
-        "cong ty tnhh covestro (viet nam)",
-        "cong ty tnhh covestro (vietnam)",
-    ],
-}
+# Step 2 — drop entire "(...)" segments when inner text contains any of these (case-insensitive)
+# Example: "acme (MST: 0123456789) (VIETNAM)" → "acme (VIETNAM)" → later → "acme vietnam"
+SALER_NAME_PAREN_REMOVE_KEYWORDS: list[str] = ["mst"]
+
+# Step 3 — general legal-entity fragments (order matters; longest phrases first)
+SALER_NAME_REGEX_REMOVE: list[str] = [
+    # Vietnamese
+    r"\bcong\s+ty\s+tnhh\b",
+    r"\bcong\s+ty\s+cp\b",
+    r"\bcong\s+ty\b",
+    r"\bcty\b",
+    r"\btnhh\b",
+    # English / Singapore / international
+    r"\bthe\b",
+    r"\bprivate\s+limited\b",
+    r"\bpublic\s+limited\s+company\b",
+    r"\bpte\.?\s*ltd\.?\b",
+    r"\bpvt\.?\s*ltd\.?\b",
+    r"\bco\.?\s*,?\s*ltd\.?\b",
+    r"\bsdn\.?\s+bhd\.?\b",
+    r"\bincorporated\b",
+    r"\bcorporation\b",
+    r"\blimited\b",
+    r"\bcompany\b",
+    r"\bpte\.?\b",
+    r"\binc\.?\b",
+    r"\bcorp\.?\b",
+    r"\bllc\.?\b",
+    r"\bplc\.?\b",
+    r"\bgmbh\b",
+    r"\bltd\.?\b",
+    r"\bco\.?\b",
+]
+
+# Step 4 — strip these characters (each → space, then spaces collapsed to one)
+SALER_NAME_STRIP_CHARACTERS = ".,()/-&"
+
+# Step 6 — optional overrides only (leave empty to rely on general rules above)
+SALER_NAME_REGEX_MAP: list[tuple[str, str]] = []
+
+# Step 7 — optional exact alias overrides (canonical → extra spellings)
+SALER_NAME_MAP: dict[str, list[str]] = {}
 
 # App seed dataset filenames (full files live in DEFAULT_DATASETS_DIR / app_data)
 DEFAULT_DATASET_FILENAMES = {
