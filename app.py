@@ -108,6 +108,13 @@ def main() -> None:
 
     mode = _analysis_mode()
 
+    # Load dataset before sidebar filters — overview expanders need dashboard_df.
+    if st.session_state.get("nav_page", "insights") == "insights":
+        apply_data_source_selection(
+            dataset_mode=mode,
+            hs_codes=ANALYSIS_HS_CODE_OPTIONS.get(mode, ANALYSIS_HS_CODE_OPTIONS["MDI"]),
+        )
+
     with st.sidebar:
         st.markdown(
             """

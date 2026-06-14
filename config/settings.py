@@ -201,13 +201,7 @@ CUSTOMER_LIST_FILE = APP_CONFIG_DIR / "customer_list.csv"
 #   5. Remove remaining punctuation → single spaces
 #   6. Optional SALER_NAME_REGEX_MAP — pattern → canonical (first match wins)
 #   7. Optional SALER_NAME_MAP — exact normalized key → canonical
-#   8. Otherwise keep cleaned lowercase text from step 5
-#
-# Example — these become one saler without naming Wanhua in a map:
-#   "wanhua chemical (ningbo) trading co., ltd"
-#   "wanhua chemical(ningbo) trading co.,ltd"
-#   "WANHUA CHEMICAL NINGBO TRADING CO LTD"
-#   → "wanhua chemical ningbo trading"
+#   8. Uppercase final saler label
 
 # Step 2 — drop entire "(...)" segments when inner text contains any of these (case-insensitive)
 # Example: "acme (MST: 0123456789) (VIETNAM)" → "acme (VIETNAM)" → later → "acme vietnam"
@@ -308,6 +302,22 @@ INDENT_TRANSPORT_LABELS = [
 ]
 # Sale channel filter options (Tab 1 & Tab 2) — volumes use selected channel only
 SALE_CHANNEL_FILTER_OPTIONS = [SALE_CHANNEL_INDENT_VALUE, SALE_CHANNEL_LOCAL_VALUE]
+
+# ── type_sale (direct vs indirect via saler name) ───────────────────────────
+TYPE_SALE_COLUMN = "type_sale"
+TYPE_SALE_DIRECT = "DIRECT"
+TYPE_SALE_INDIRECT = "INDIRECT"
+TYPE_SALE_FILTER_ALL = "All"
+TYPE_SALE_FILTER_OPTIONS = [TYPE_SALE_FILTER_ALL, TYPE_SALE_DIRECT, TYPE_SALE_INDIRECT]
+TYPE_SALE_CHART_COLORS: dict[str, str] = {
+    TYPE_SALE_DIRECT: "#10B981",
+    TYPE_SALE_INDIRECT: "#F59E0B",
+}
+# Optional regex overrides per supplier label (default: escaped supplier name substring)
+TYPE_SALE_SUPPLIER_PATTERNS: dict[str, str] = {
+    "DOW": r"\bdow\b",
+    "KMC": r"\bkmc\b",
+}
 
 # ── Supplier filter lists (Tab 1 & Tab 2 sidebar) ───────────────────────────
 # Fixed order for selectbox. Suppliers not listed roll up to OTHER in charts/KPIs.

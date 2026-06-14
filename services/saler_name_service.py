@@ -139,18 +139,25 @@ def build_saler_name_lookup() -> dict[str, str]:
     return lookup
 
 
+def _finalize_saler_label(text: str) -> str:
+    """Final stored saler label: single spaces, all uppercase."""
+    out = _collapse_spaces(str(text).strip())
+    return out.upper() if out else ""
+
+
 def process_saler_name(value) -> str:
     """
     Process one saler value:
     lowercase → general regex remove → strip punctuation → collapse spaces
-    → optional regex/exact map overrides.
+    → optional regex/exact map overrides → uppercase output.
 
     Input: raw `saler` cell value.
     Output: cleaned / canonical saler string for storage and analysis.
     """
     prepared = _prepare_saler_text(value)
     if not prepared:
-        return str(value).strip() if value is not None and str(value).strip() else ""
+        raw = str(value).strip() if value is not None and str(value).strip() else ""
+        return _finalize_saler_label(raw) if raw else ""
 
     cleaned = apply_saler_punctuation_cleanup(
         apply_saler_character_cleanup(
@@ -160,15 +167,15 @@ def process_saler_name(value) -> str:
 
     mapped = apply_saler_regex_map(cleaned)
     if mapped:
-        return mapped
+        return _finalize_saler_label(mapped)
 
     lookup = build_saler_name_lookup()
     if lookup:
         key = normalize_saler_key(cleaned)
         if key and key in lookup:
-            return lookup[key]
+            return _finalize_saler_label(lookup[key])
 
-    return cleaned
+    return _finalize_saler_label(cleaned)
 
 
 def canonicalize_saler_name(value) -> str:

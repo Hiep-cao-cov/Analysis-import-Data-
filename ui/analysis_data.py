@@ -16,14 +16,17 @@ import streamlit as st
 
 from config.settings import COL_BRAND_NAME, COL_SUPPLIER, COL_TYPE
 from services.analysis_service import prepare_analysis_frame
-from services.data_loader_service import load_and_standardize, resolve_ingest_force_etl
+from services.data_loader_service import load_and_standardize, load_file, resolve_ingest_force_etl
 from services.data_paths import (
     analysis_dataset_save_path,
+    is_seed_dataset_path,
     resolve_analysis_dataset,
     temp_file_path,
 )
-
 from services.customer_name_service import apply_customer_short_names, find_unmapped_customers
+from services.saler_name_service import apply_saler_name_standardization
+from services.type_sale_service import apply_type_sale_column, product_line_for_hs_codes
+
 from services.ml_columns import has_ml_target_columns, missing_ml_target_names, prepare_dataset_for_storage
 
 
@@ -52,34 +55,38 @@ def add_volume_ton(df: pd.DataFrame) -> pd.DataFrame:
 
 
 
+def load_seed_dataset_for_analysis(
+    source: Path,
+    hs_codes: list[str] | None = None,
+) -> pd.DataFrame:
+    """
+    Load app_data seed CSV without ETL or row filters.
+    Applies customer short names + saler/type_sale in memory; seed file on disk is not modified.
+    """
+    df = load_file(source)
+    product_line = product_line_for_hs_codes(hs_codes, path=source)
+    df = apply_customer_short_names(df)
+    df = apply_saler_name_standardization(df)
+    df = apply_type_sale_column(df, product_line=product_line)
+    return add_volume_ton(prepare_analysis_frame(df))
+
+
 def ingest_file(source: Path, *, force_etl: bool, hs_codes: list[str] | None = None) -> pd.DataFrame:
-
     df, _ = load_and_standardize(
-
         source,
-
         unit_filter="kg",
-
         force_etl=force_etl,
-
         hs_codes=hs_codes if hs_codes is not None else [],
-
         rows_to_drop=None,
-
     )
-
     return apply_customer_short_names(add_volume_ton(prepare_analysis_frame(df)))
 
 
-
-
-
 def load_default_data(default_dataset: Path, hs_codes: list[str] | None = None) -> pd.DataFrame | None:
-
     if not default_dataset.exists():
-
         return None
-
+    if is_seed_dataset_path(default_dataset):
+        return load_seed_dataset_for_analysis(default_dataset, hs_codes=hs_codes)
     return ingest_file(default_dataset, force_etl=False, hs_codes=hs_codes)
 
 

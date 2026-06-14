@@ -2323,6 +2323,105 @@ def build_supplier_top_salers_data(
     return pd.DataFrame(rows), n_salers
 
 
+def build_supplier_type_sale_share_data(
+    df: pd.DataFrame,
+    *,
+    volume_col: str = "volume_ton",
+) -> pd.DataFrame:
+    """Volume share by type_sale (DIRECT / INDIRECT) for a supplier-period scope."""
+    from config.settings import TYPE_SALE_COLUMN, TYPE_SALE_DIRECT, TYPE_SALE_INDIRECT
+
+    empty = pd.DataFrame(columns=[TYPE_SALE_COLUMN, volume_col, "share_pct"])
+    if df.empty or TYPE_SALE_COLUMN not in df.columns or volume_col not in df.columns:
+        return empty
+
+    work = df.copy()
+    work[volume_col] = pd.to_numeric(work[volume_col], errors="coerce").fillna(0.0)
+    work[TYPE_SALE_COLUMN] = (
+        work[TYPE_SALE_COLUMN]
+        .fillna(TYPE_SALE_INDIRECT)
+        .astype(str)
+        .str.strip()
+        .str.upper()
+    )
+    work.loc[~work[TYPE_SALE_COLUMN].isin([TYPE_SALE_DIRECT, TYPE_SALE_INDIRECT]), TYPE_SALE_COLUMN] = (
+        TYPE_SALE_INDIRECT
+    )
+
+    grouped = (
+        work.groupby(TYPE_SALE_COLUMN, dropna=False)[volume_col]
+        .sum()
+        .reset_index()
+        .sort_values(TYPE_SALE_COLUMN)
+    )
+    total = float(grouped[volume_col].sum())
+    if total <= 0:
+        return empty
+
+    grouped["share_pct"] = (grouped[volume_col] / total * 100).round(1)
+    return grouped
+
+
+def render_supplier_type_sale_pie_chart(
+    df: pd.DataFrame,
+    *,
+    supplier: str,
+    material_type: str,
+    sale_channel: str,
+    period_caption: str,
+    chart_key: str = "sup_type_sale_pie",
+    empty_message: str = "No direct / indirect sale data for this period.",
+) -> None:
+    """Pie chart: DIRECT vs INDIRECT volume share for one supplier in the active period."""
+    import plotly.express as px
+
+    from config.settings import TYPE_SALE_CHART_COLORS, TYPE_SALE_COLUMN
+
+    supplier_name = format_supplier_display_name(supplier)
+    mt_label = str(material_type).strip()
+    pie_df = build_supplier_type_sale_share_data(df)
+
+    chart_card_title("Direct vs indirect sale", large=True)
+    st.caption(f"{supplier_name} · {mt_label} · {sale_channel} · {period_caption}")
+
+    if pie_df.empty:
+        st.info(empty_message)
+        return
+
+    color_map = {
+        str(row[TYPE_SALE_COLUMN]): TYPE_SALE_CHART_COLORS.get(str(row[TYPE_SALE_COLUMN]), CHART["gray"])
+        for _, row in pie_df.iterrows()
+    }
+
+    fig = px.pie(
+        pie_df,
+        names=TYPE_SALE_COLUMN,
+        values="volume_ton",
+        color=TYPE_SALE_COLUMN,
+        color_discrete_map=color_map,
+        title=None,
+        hole=0.42,
+    )
+    fig.update_traces(
+        textposition="inside",
+        textinfo="percent+label",
+        textfont=dict(size=12, color="#F9FAFB"),
+        hovertemplate="%{label}<br>Volume: %{value:,.1f} ton<br>Share: %{percent}<extra></extra>",
+    )
+    fig.update_layout(
+        height=320 if chart_key.endswith("_side") else 360,
+        margin=dict(l=8, r=8, t=8, b=8),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#E5E7EB"),
+        legend=dict(font=dict(color="#F9FAFB", size=11)),
+        showlegend=True,
+    )
+    st.plotly_chart(fig, use_container_width=True, key=chart_key)
+    total_ton = float(pie_df["volume_ton"].sum())
+    chart_footnote(f"Total volume: {total_ton:,.1f} ton · by saler match to supplier list")
+
+
 def render_supplier_top_salers_chart(
     df: pd.DataFrame,
     *,

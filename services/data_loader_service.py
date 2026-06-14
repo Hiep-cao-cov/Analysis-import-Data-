@@ -9,6 +9,7 @@ from config.settings import DATA_DIR, MDI_HS_CODES, ML_COLUMN_CONFIG
 from services.etl_service import run_etl
 from services.customer_name_service import apply_customer_short_names
 from services.saler_name_service import apply_saler_name_standardization
+from services.type_sale_service import apply_type_sale_column, product_line_for_hs_codes
 from services.ml_columns import normalize_ml_column_names
 from services.sale_channel_service import add_sale_channel_column
 
@@ -149,6 +150,9 @@ def load_and_standardize(
     df = add_sale_channel_column(df)
     df = apply_customer_short_names(df)
     df = apply_saler_name_standardization(df)
+    df = apply_type_sale_column(
+        df, product_line=product_line_for_hs_codes(hs_codes, path=source)
+    )
     df = df.reset_index(drop=True)
     msg = f"Loaded standardized dataset · {len(df):,} rows"
     if save_path:

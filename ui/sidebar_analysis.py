@@ -8,7 +8,7 @@ import streamlit as st
 
 
 
-from config.settings import ANALYSIS_DATASET_OPTIONS, SALE_CHANNEL_FILTER_OPTIONS
+from config.settings import ANALYSIS_DATASET_OPTIONS, SALE_CHANNEL_FILTER_OPTIONS, TYPE_SALE_FILTER_OPTIONS
 from services.analysis_service import filter_options
 from services.customer_filter_service import (
     customer_id_to_name,
@@ -97,10 +97,23 @@ def render_tab_options_inside_analysis_mode(subtab: str) -> None:
 
 
 
-def _get_market_overview_sidebar_options() -> tuple[list[str], list[str]]:
+def _get_market_overview_sidebar_options(
+    *,
+    scope_type_sale: bool = False,
+) -> tuple[list[str], list[str]]:
     df = st.session_state.get("dashboard_df")
     if df is None or df.empty:
         return [], []
+
+    if scope_type_sale:
+        from services.type_sale_service import filter_by_type_sale
+
+        df = filter_by_type_sale(
+            df,
+            st.session_state.get(ANALYSIS_FILTER_TYPE_SALE, TYPE_SALE_FILTER_OPTIONS[0]),
+        )
+        if df.empty:
+            return [], []
 
     opts = filter_options(df)
     years = opts.get("years", [])
@@ -133,6 +146,7 @@ ANALYSIS_FILTER_YEAR = "analysis_year"
 ANALYSIS_FILTER_SUPPLIER = "analysis_supplier"
 ANALYSIS_FILTER_CUSTOMER = "analysis_customer"
 ANALYSIS_FILTER_MTYPE = "analysis_mtype"
+ANALYSIS_FILTER_TYPE_SALE = "analysis_type_sale"
 _LEGACY_FILTER_KEYS = (
     "dash_mtype",
     "sup_mtype",
@@ -194,6 +208,7 @@ def sync_dataset_mode_from_sidebar() -> bool:
     Apply the Dataset selectbox (sidebar_analysis_mode) to analysis_mode before data load.
     Call before the selectbox is drawn — never write sidebar_analysis_mode here (widget owns it).
     Returns True when the active dataset changed.
+    Resets analysis subtab to Market overview when MDI/TDI switches.
     """
     options = list(ANALYSIS_DATASET_OPTIONS.keys())
     selected = _normalize_analysis_dataset_mode(
@@ -205,6 +220,7 @@ def sync_dataset_mode_from_sidebar() -> bool:
     if selected == current:
         return False
     st.session_state.analysis_mode = selected
+    st.session_state.analysis_subtab = "market"
     st.session_state.dashboard_df = None
     st.session_state.dashboard_source = None
     st.session_state.active_df = None
@@ -221,6 +237,7 @@ def _reset_analysis_filters_for_dataset_change() -> None:
         ANALYSIS_FILTER_SUPPLIER,
         ANALYSIS_FILTER_CUSTOMER,
         ANALYSIS_FILTER_MTYPE,
+        ANALYSIS_FILTER_TYPE_SALE,
         *_LEGACY_FILTER_KEYS,
     ):
         st.session_state.pop(key, None)
@@ -292,10 +309,27 @@ def _material_type_selectbox(types: list[str], *, key: str) -> None:
     )
 
 
-def _render_overview_filter_expander(expander_title: str) -> None:
+def _type_sale_selectbox(*, key: str = ANALYSIS_FILTER_TYPE_SALE) -> None:
+    if st.session_state.get(key) not in TYPE_SALE_FILTER_OPTIONS:
+        st.session_state[key] = TYPE_SALE_FILTER_OPTIONS[0]
+    st.selectbox(
+        "Type sale",
+        TYPE_SALE_FILTER_OPTIONS,
+        key=key,
+        help="DIRECT = customer buys from supplier entity in saler name. INDIRECT = via trader/distributor.",
+    )
+
+
+def _render_overview_filter_expander(
+    expander_title: str,
+    *,
+    include_type_sale: bool = False,
+) -> None:
     """Shared sidebar filters for Tab 1 and Tab 2 (same session keys)."""
     _migrate_legacy_analysis_filter_keys()
-    years, suppliers = _get_market_overview_sidebar_options()
+    years, suppliers = _get_market_overview_sidebar_options(
+        scope_type_sale=include_type_sale,
+    )
     types = _get_material_types()
     if not years or not suppliers:
         return
@@ -312,6 +346,8 @@ def _render_overview_filter_expander(expander_title: str) -> None:
 
     with st.expander(expander_title, expanded=True):
         _sale_channel_selectbox(key="analysis_sale_channel")
+        if include_type_sale:
+            _type_sale_selectbox()
         st.selectbox(
             "Year",
             years,
@@ -443,7 +479,7 @@ def render_supplier_overview_filters() -> None:
         and st.session_state.get("analysis_subtab", "market") == "supplier"
     ):
         return
-    _render_overview_filter_expander(":orange[Supplier overview filters]")
+    _render_overview_filter_expander(":orange[Supplier overview filters]", include_type_sale=True)
 
 
 def render_shared_data_sidebar() -> None:

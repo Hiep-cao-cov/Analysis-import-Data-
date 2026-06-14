@@ -5,7 +5,12 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from config.settings import SALE_CHANNEL_FILTER_OPTIONS, SUPPLIER_TOP_CUSTOMER_OPTIONS
+from config.settings import (
+    SALE_CHANNEL_FILTER_OPTIONS,
+    SUPPLIER_TOP_CUSTOMER_OPTIONS,
+    TYPE_SALE_FILTER_ALL,
+)
+from services.type_sale_service import filter_by_type_sale
 from services.analysis_service import MONTH_ORDER, filter_by_material_type, filter_options, resolve_type_column
 from services.supplier_filter_service import (
     prepare_supplier_analysis_frame,
@@ -24,6 +29,7 @@ from ui.chart_volume import (
     render_supplier_period_customer_volume_chart,
     render_supplier_top_customers_chart,
     render_supplier_top_salers_chart,
+    render_supplier_type_sale_pie_chart,
     render_yearly_supplier_market_volume_chart,
     supplier_color_map_for_material,
 )
@@ -217,6 +223,54 @@ def _filter_quarter_scope(df: pd.DataFrame, quarter: str) -> pd.DataFrame:
     return df.loc[mask].copy()
 
 
+def _type_sale_pie_scope(
+    df_channel: pd.DataFrame,
+    *,
+    supplier: str,
+    supplier_col: str,
+    material_type: str,
+    type_col: str,
+    period_mode: str,
+    year_int: int,
+    selected_quarter: str | None,
+    selected_month: str | None,
+) -> pd.DataFrame:
+    """Supplier rows for the active period (year / quarter / month) — ignores type_sale filter."""
+    scoped = _supplier_period_scope(
+        df_channel,
+        supplier=supplier,
+        supplier_col=supplier_col,
+        material_type=material_type,
+        type_col=type_col,
+        period_mode=period_mode,
+        year_int=year_int,
+    )
+    if period_mode == "Quarterly" and selected_quarter:
+        return _filter_quarter_scope(scoped, selected_quarter)
+    if period_mode == "Monthly" and selected_month:
+        return _filter_month_scope(scoped, selected_month)
+    return scoped
+
+
+def _type_sale_period_caption(
+    *,
+    period_mode: str,
+    year_int: int,
+    period_scope: pd.DataFrame,
+    selected_quarter: str | None,
+    selected_month: str | None,
+) -> str:
+    if period_mode == "Yearly":
+        return format_dataset_year_range(period_scope) or f"Year {year_int}"
+    if period_mode == "Quarterly":
+        if selected_quarter:
+            return f"{year_int} · {str(selected_quarter).upper()}"
+        return f"Year {year_int}"
+    if selected_month:
+        return f"{year_int} · {_month_display_label(selected_month)}"
+    return f"Year {year_int}"
+
+
 def _render_view_mode_controls(
     suppliers: list[str],
     primary_supplier: str,
@@ -284,7 +338,12 @@ def render_supplier_page(df: pd.DataFrame, dataset_label: str) -> None:
         SALE_CHANNEL_FILTER_OPTIONS[0],
     )
 
-    from ui.sidebar_analysis import ANALYSIS_FILTER_MTYPE, ANALYSIS_FILTER_SUPPLIER, ANALYSIS_FILTER_YEAR
+    from ui.sidebar_analysis import (
+        ANALYSIS_FILTER_MTYPE,
+        ANALYSIS_FILTER_SUPPLIER,
+        ANALYSIS_FILTER_TYPE_SALE,
+        ANALYSIS_FILTER_YEAR,
+    )
 
     material_type = st.session_state.get(ANALYSIS_FILTER_MTYPE)
     if not material_type or material_type not in types:
@@ -292,8 +351,14 @@ def render_supplier_page(df: pd.DataFrame, dataset_label: str) -> None:
 
         material_type = _default_material_type_for_dataset(types) if types else ""
 
+    type_sale = st.session_state.get(ANALYSIS_FILTER_TYPE_SALE, TYPE_SALE_FILTER_ALL)
+    df_type_sale = filter_by_type_sale(df, type_sale)
+    if df_type_sale.empty:
+        st.warning("No rows match the current type sale filter.")
+        return
+
     suppliers = resolve_supplier_filter_options(
-        df,
+        df_type_sale,
         dataset_label=dataset_label,
         material_type=material_type,
         sale_channel=sale_channel,
@@ -325,12 +390,22 @@ def render_supplier_page(df: pd.DataFrame, dataset_label: str) -> None:
         year=year,
         supplier=supplier,
         show_supplier=st.session_state.get("sup_view_mode", "Single supplier") != "Compare suppliers",
+        type_sale=type_sale,
+        show_type_sale=True,
     )
 
     year_int = int(year)
     type_col = resolve_type_column(df)
     df_channel = prepare_supplier_analysis_frame(
-        df,
+        df_type_sale,
+        dataset_label=dataset_label,
+        material_type=material_type,
+        sale_channel=sale_channel,
+        type_col=type_col,
+        supplier_col=supplier_col,
+    )
+    df_channel_pie = prepare_supplier_analysis_frame(
+        filter_by_type_sale(df, TYPE_SALE_FILTER_ALL),
         dataset_label=dataset_label,
         material_type=material_type,
         sale_channel=sale_channel,
@@ -362,6 +437,24 @@ def render_supplier_page(df: pd.DataFrame, dataset_label: str) -> None:
         type_col=type_col,
         period_mode=period_mode,
         year_int=year_int,
+    )
+    type_sale_pie_scope = _type_sale_pie_scope(
+        df_channel_pie,
+        supplier=supplier,
+        supplier_col=supplier_col,
+        material_type=material_type,
+        type_col=type_col,
+        period_mode=period_mode,
+        year_int=year_int,
+        selected_quarter=selected_quarter,
+        selected_month=selected_month,
+    )
+    type_sale_period_caption = _type_sale_period_caption(
+        period_mode=period_mode,
+        year_int=year_int,
+        period_scope=type_sale_pie_scope,
+        selected_quarter=selected_quarter,
+        selected_month=selected_month,
     )
 
     customers_chart_df, n_customers = build_supplier_top_customers_data(
@@ -435,6 +528,7 @@ def render_supplier_page(df: pd.DataFrame, dataset_label: str) -> None:
 
     filter_sig = (
         sale_channel,
+        type_sale,
         year_int,
         supplier,
         material_type,
@@ -594,6 +688,14 @@ def render_supplier_page(df: pd.DataFrame, dataset_label: str) -> None:
                         empty_message="No customer volume for this supplier and month.",
                     )
         with col_top_customers:
+            render_supplier_type_sale_pie_chart(
+                type_sale_pie_scope,
+                supplier=supplier,
+                material_type=material_type,
+                sale_channel=sale_channel,
+                period_caption=type_sale_period_caption,
+                chart_key=f"sup_type_sale_pie_{period_mode}_{year_int}_{selected_quarter or ''}_{selected_month or ''}",
+            )
             render_supplier_top_customers_chart(**top_customers_kwargs, side_panel=True)
             render_supplier_top_salers_chart(**top_salers_kwargs, side_panel=True)
 

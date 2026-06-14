@@ -971,11 +971,15 @@ def render_analysis_chip_row(
     year: str | int,
     supplier: str,
     show_supplier: bool = True,
+    type_sale: str | None = None,
+    show_type_sale: bool = False,
 ) -> None:
-    """Top filter chips: dataset, sale channel, year, and optional supplier."""
+    """Top filter chips: dataset, sale channel, optional type sale, year, and optional supplier."""
     import html
 
     import streamlit as st
+
+    from config.settings import TYPE_SALE_FILTER_ALL
 
     def _chip(label: str, *, active: bool = False) -> str:
         cls = "chip chip-active" if active else "chip"
@@ -987,6 +991,8 @@ def render_analysis_chip_row(
     ]
     for channel in sale_channel_options:
         chips.append(_chip(channel, active=channel == sale_channel))
+    if show_type_sale and type_sale and str(type_sale).strip().upper() != TYPE_SALE_FILTER_ALL.upper():
+        chips.append(_chip(str(type_sale).strip().upper(), active=True))
     chips.append(_chip(str(year), active=True))
     if show_supplier:
         chips.append(_chip(format_supplier_display_name(supplier), active=True))

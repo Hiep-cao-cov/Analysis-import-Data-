@@ -37,6 +37,15 @@ def seed_dataset_path(mode: str) -> Path:
     return DEFAULT_DATASETS_DIR / DEFAULT_DATASET_FILENAMES[key]
 
 
+def is_seed_dataset_path(path: Path) -> bool:
+    """True when path is an app_data seed file (not a user copy under data/)."""
+    resolved = Path(path).resolve()
+    return any(
+        (DEFAULT_DATASETS_DIR / name).resolve() == resolved
+        for name in DEFAULT_DATASET_FILENAMES.values()
+    )
+
+
 def user_dataset_path(mode: str) -> Path:
     """User working dataset path under data/ (updated on merge / upload)."""
     key = normalize_dataset_mode(mode)
