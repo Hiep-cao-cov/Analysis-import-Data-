@@ -15,8 +15,6 @@ from services.customer_filter_service import (
     resolve_customer_filter_options,
 )
 from services.supplier_filter_service import resolve_supplier_filter_options
-
-from ui.sidebar_nav import sidebar_nav_button
 from ui.theme import format_customer_display_name
 
 
@@ -227,6 +225,9 @@ def sync_dataset_mode_from_sidebar() -> bool:
     st.session_state.active_df_name = None
     st.session_state.dashboard_msg = None
     _reset_analysis_filters_for_dataset_change()
+    from ui.upload_preview_panel import clear_sidebar_upload_state
+
+    clear_sidebar_upload_state(reset_source_mode=True)
     return True
 
 
@@ -522,11 +523,11 @@ def render_shared_data_sidebar() -> None:
 
         st.session_state.dash_merge_requested = False
 
-        _reset_analysis_filters_for_dataset_change()
-
         from ui.upload_preview_panel import clear_upload_preview_cache
 
         clear_upload_preview_cache()
+
+        _reset_analysis_filters_for_dataset_change()
 
 
 
@@ -551,7 +552,7 @@ def render_shared_data_sidebar() -> None:
             key="dash_update_data_btn",
             use_container_width=True,
             disabled=not merge_ready,
-            help="Enabled when the upload passes column checks and is not already merged.",
+            help="Merge the processed upload into your dataset. Download processed file above to review first.",
         ):
             st.session_state.dash_merge_requested = True
 
@@ -559,29 +560,6 @@ def render_shared_data_sidebar() -> None:
         from ui.customer_list_panel import render_customer_list_panel
 
         render_customer_list_panel()
-
-
-
-
-
-def render_ml_tools_section() -> None:
-
-    """Train / Predict — content inside the Model tools expander."""
-
-    st.caption(
-
-        "Analytics need BRAND NAME, SUPPLIER, and TYPE. "
-
-        "Run **Predict new** if your upload is missing them."
-
-    )
-
-    sidebar_nav_button("Train Model", "train", key_suffix="_ml")
-
-    sidebar_nav_button("Predict new", "predict", key_suffix="_ml")
-
-
-
 
 
 def render_analysis_sidebar() -> str:
@@ -602,15 +580,3 @@ def render_analysis_sidebar() -> str:
     render_customer_overview_filters()
 
     return st.session_state.get("analysis_subtab", "market")
-
-
-
-
-
-def render_back_to_analysis_sidebar() -> None:
-
-    st.markdown("---")
-
-    sidebar_nav_button("← Back to Data Analysis", "insights", key_suffix="_back")
-
-

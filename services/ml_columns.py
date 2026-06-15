@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from config.settings import COL_BRAND_NAME, COL_SUPPLIER, COL_TYPE, COLUMN_RENAME_MAP
+from config.settings import COL_BRAND_NAME, COL_SUPPLIER, COL_TYPE
 
 # Case-insensitive aliases → canonical name
 _TARGET_ALIASES: dict[str, str] = {
@@ -33,14 +33,6 @@ MARK_FOR_DELETE_COL = "marked_for_delete"
 DELETE_REASON_COL = "delete_reason"
 
 EXPORT_PRESERVE_PREFIX = "_preserve__"
-
-# Keep ETL-standardized values in prediction export (do not restore pre-ETL snapshots).
-EXPORT_PRESERVE_SKIP_COLUMNS = frozenset({
-    "unit",
-    "unit_price",
-    "volume",
-    "customer_name",
-})
 
 
 def _norm_key(name: str) -> str:
@@ -91,81 +83,6 @@ def normalize_ml_column_names(df: pd.DataFrame) -> pd.DataFrame:
                 rename_map[col] = canonical
     if rename_map:
         out = out.rename(columns=rename_map)
-    return out
-
-
-def apply_predictions_to_targets(df: pd.DataFrame) -> pd.DataFrame:
-    """Map predicted_* columns into BRAND NAME / SUPPLIER / TYPE."""
-    out = normalize_ml_column_names(df.copy())
-    legacy_preds = {
-        "predicted_label": COL_BRAND_NAME,
-        "predicted_supplier": COL_SUPPLIER,
-        "predicted_type": COL_TYPE,
-    }
-    for pred_col, canonical in legacy_preds.items():
-        if pred_col not in out.columns:
-            continue
-        if canonical not in out.columns:
-            out[canonical] = out[pred_col]
-        else:
-            mask = out[canonical].isna() | (
-                out[canonical].astype(str).str.strip().isin(["", "nan", "NaN", "None"])
-            )
-            out.loc[mask, canonical] = out.loc[mask, pred_col]
-        out = out.drop(columns=[pred_col], errors="ignore")
-    return out
-
-
-def restore_preserved_text_columns(
-    df: pd.DataFrame,
-    *,
-    keep_predict_row_id: bool = False,
-) -> pd.DataFrame:
-    """Restore original input values for export after ETL mutations."""
-    return restore_all_preserved_export_columns(
-        df,
-        keep_predict_row_id=keep_predict_row_id,
-    )
-
-
-def restore_all_preserved_export_columns(
-    df: pd.DataFrame,
-    *,
-    keep_predict_row_id: bool = False,
-) -> pd.DataFrame:
-    """Replace ETL-mutated columns with pre-ETL snapshots (original casing/format)."""
-    out = df.copy()
-    rename_map = {str(k).strip().lower(): str(v).strip() for k, v in COLUMN_RENAME_MAP.items()}
-
-    for col in list(out.columns):
-        col_str = str(col)
-        if not col_str.startswith(EXPORT_PRESERVE_PREFIX):
-            continue
-        old_col = col_str[len(EXPORT_PRESERVE_PREFIX) :]
-        target = rename_map.get(old_col, old_col)
-        if target in EXPORT_PRESERVE_SKIP_COLUMNS:
-            out = out.drop(columns=[col_str])
-            continue
-        if target in out.columns:
-            out[target] = out[col]
-        out = out.drop(columns=[col_str])
-
-    if not keep_predict_row_id:
-        out = out.drop(columns=["_predict_row_id"], errors="ignore")
-    return finalize_export_unit_columns(out)
-
-
-def finalize_export_unit_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Ensure export uses kg-only labels after tấn→kg ETL conversion."""
-    out = df.copy()
-    if "unit" not in out.columns:
-        return out
-    normalized = out["unit"].astype(str).str.strip().str.lower()
-    kg_like = {"kg", "kgs", "kilogram", "kilograms"}
-    ton_like = {"tấn", "tan", "ton", "tons"}
-    out["unit"] = normalized.map(
-        lambda u: "kg" if u in kg_like or u in ton_like else u
-    )
     return out
 
 

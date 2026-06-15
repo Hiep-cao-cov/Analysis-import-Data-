@@ -1,6 +1,0 @@
-﻿delete_content,detail
-
-# DEPRECATED — edit blacklist terms in config/settings.py (DESCRIPTION_BLACKLIST_TERMS)
-
-# This file is kept for reference only and is NOT loaded by the app.
-

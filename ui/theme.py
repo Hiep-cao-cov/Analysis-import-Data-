@@ -1048,11 +1048,3 @@ def sidebar_section_close():
     import streamlit as st
     st.markdown("</div>", unsafe_allow_html=True)
 
-
-def section_header(title: str, subtitle: str = ""):
-    import streamlit as st
-    sub = f'<p style="color:{BRAND["muted"]};font-size:0.875rem;margin:0 0 0.75rem 0;">{subtitle}</p>' if subtitle else ""
-    st.markdown(
-        f'<h3 style="color:{BRAND["text"]};font-size:1.05rem;font-weight:700;margin:1rem 0 0.25rem 0;">{title}</h3>{sub}',
-        unsafe_allow_html=True,
-    )

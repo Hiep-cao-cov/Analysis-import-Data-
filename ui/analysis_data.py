@@ -16,7 +16,8 @@ import streamlit as st
 
 from config.settings import COL_BRAND_NAME, COL_SUPPLIER, COL_TYPE
 from services.analysis_service import prepare_analysis_frame
-from services.data_loader_service import load_and_standardize, load_file, resolve_ingest_force_etl
+from services.data_loader_service import load_and_standardize, load_file
+from services.upload_ingest_service import ingest_upload_file, load_storage_dataset
 from services.data_paths import (
     analysis_dataset_save_path,
     is_seed_dataset_path,
@@ -32,6 +33,8 @@ from services.ml_columns import has_ml_target_columns, missing_ml_target_names, 
 
 
 KG_PER_TON = 1000.0
+
+UPLOAD_PREVIEW_SOURCE_PREFIX = "upload_preview:"
 
 
 
@@ -68,10 +71,34 @@ def load_seed_dataset_for_analysis(
     df = apply_customer_short_names(df)
     df = apply_saler_name_standardization(df)
     df = apply_type_sale_column(df, product_line=product_line)
+    return prepare_dataframe_for_analysis(df, hs_codes=hs_codes, path=source)
+
+
+def prepare_dataframe_for_analysis(
+    df: pd.DataFrame,
+    *,
+    hs_codes: list[str] | None = None,
+    path: Path | None = None,
+) -> pd.DataFrame:
+    """Add chart/filter columns for dashboard_df; always re-apply saler rules in memory."""
+    if df.empty:
+        return df
+    product_line = product_line_for_hs_codes(hs_codes, path=path)
+    df = apply_saler_name_standardization(df)
+    df = apply_type_sale_column(df, product_line=product_line)
     return add_volume_ton(prepare_analysis_frame(df))
 
 
+def is_upload_preview_source(source_name: str | None) -> bool:
+    return str(source_name or "").startswith(UPLOAD_PREVIEW_SOURCE_PREFIX)
+
+
+def upload_preview_source_name(file_name: str) -> str:
+    return f"{UPLOAD_PREVIEW_SOURCE_PREFIX}{file_name}"
+
+
 def ingest_file(source: Path, *, force_etl: bool, hs_codes: list[str] | None = None) -> pd.DataFrame:
+    """Load merged dataset under data/ for analysis (light path + analysis columns)."""
     df, _ = load_and_standardize(
         source,
         unit_filter="kg",
@@ -79,7 +106,7 @@ def ingest_file(source: Path, *, force_etl: bool, hs_codes: list[str] | None = N
         hs_codes=hs_codes if hs_codes is not None else [],
         rows_to_drop=None,
     )
-    return apply_customer_short_names(add_volume_ton(prepare_analysis_frame(df)))
+    return prepare_dataframe_for_analysis(df, hs_codes=hs_codes, path=source)
 
 
 def load_default_data(default_dataset: Path, hs_codes: list[str] | None = None) -> pd.DataFrame | None:
@@ -149,17 +176,27 @@ def append_only_new_rows(base_df: pd.DataFrame, incoming_df: pd.DataFrame) -> tu
 
         "customer_name",
 
-        "supplier_raw",
+        COL_SUPPLIER,
 
-        "type_clean",
+        COL_TYPE,
 
         COL_BRAND_NAME,
 
+        "saler",
+
         "description",
+
+        "volume",
 
         "volume_ton",
 
         "total_usd",
+
+        "transaction",
+
+        "supplier_raw",
+
+        "type_clean",
 
     ]
 
@@ -254,26 +291,31 @@ def apply_data_source_selection(dataset_mode: str, hs_codes: list[str] | None = 
 
     if source_mode == "Upload new file":
 
-        if current_df is None or current_source != dataset_label:
+        uploaded = st.session_state.get("dash_sidebar_upload")
+        upload_dataset_mode = st.session_state.get("dash_upload_dataset_mode")
+        current_mode = str(dataset_mode).strip().upper()
+        if current_mode == "PMDI":
+            current_mode = "MDI"
 
-            base_df = load_default_data(load_path, hs_codes=hs_codes)
-
-            if base_df is not None and has_ml_target_columns(base_df):
-
-                set_dataframe(base_df, dataset_label)
-
-                st.session_state.dashboard_msg = f"Loaded current dataset · {len(base_df):,} rows"
-
-            elif base_df is not None:
-
-                st.session_state.dashboard_df = None
-
-                st.session_state.dashboard_ml_ready = False
-
-
+        if (
+            upload_dataset_mode
+            and str(upload_dataset_mode).upper() != current_mode
+            and is_upload_preview_source(current_source)
+        ):
+            st.session_state.dashboard_df = None
+            st.session_state.dashboard_source = None
+            st.session_state.dashboard_ml_ready = False
+            st.session_state.dashboard_msg = None
 
         if not st.session_state.get("dash_merge_requested", False):
+            from ui.upload_preview_panel import ensure_upload_preview_dashboard
 
+            if uploaded is not None:
+                ensure_upload_preview_dashboard(uploaded, hs_codes=hs_codes)
+            else:
+                st.session_state.dashboard_df = None
+                st.session_state.dashboard_ml_ready = False
+                st.session_state.dashboard_msg = None
             return
 
         st.session_state.dash_merge_requested = False
@@ -302,25 +344,9 @@ def apply_data_source_selection(dataset_mode: str, hs_codes: list[str] | None = 
 
             temp.write_bytes(uploaded.getvalue())
 
-            preview = (
+            with st.spinner("Processing uploaded file (full ETL)..."):
 
-                pd.read_csv(temp, nrows=20, low_memory=False)
-
-                if temp.suffix.lower() == ".csv"
-
-                else pd.read_excel(temp, nrows=20)
-
-            )
-
-            preview.columns = [str(c).strip() for c in preview.columns]
-
-            force_etl = resolve_ingest_force_etl(preview)
-
-            with st.spinner("Processing uploaded file..."):
-
-                incoming_df = ingest_file(temp, force_etl=force_etl, hs_codes=hs_codes)
-
-                incoming_df = prepare_dataset_for_storage(incoming_df)
+                incoming_df = ingest_upload_file(temp, hs_codes=hs_codes)
 
 
 
@@ -340,33 +366,37 @@ def apply_data_source_selection(dataset_mode: str, hs_codes: list[str] | None = 
 
             with st.spinner("Merging with current dataset..."):
 
-                base_df = load_default_data(load_path, hs_codes=hs_codes)
+                base_df = load_storage_dataset(load_path, hs_codes=hs_codes)
 
-                if base_df is None or not has_ml_target_columns(base_df):
+                if base_df is None or base_df.empty or not has_ml_target_columns(base_df):
 
                     base_df = pd.DataFrame()
 
-                merged_df, added_rows, duplicate_rows = append_only_new_rows(base_df, incoming_df)
+                merged_storage, added_rows, duplicate_rows = append_only_new_rows(base_df, incoming_df)
 
                 save_path.parent.mkdir(parents=True, exist_ok=True)
 
-                prepare_dataset_for_storage(merged_df).to_csv(
+                prepare_dataset_for_storage(merged_storage).to_csv(
                     save_path, index=False, encoding="utf-8-sig"
                 )
 
+            merged_df = prepare_dataframe_for_analysis(
+                merged_storage, hs_codes=hs_codes, path=load_path
+            )
             set_dataframe(merged_df, dataset_label)
 
             st.session_state.dash_last_merge_token = upload_token
             from ui.upload_preview_panel import clear_upload_preview_cache
 
             clear_upload_preview_cache()
-            unmapped = find_unmapped_customers(merged_df)
+            st.session_state.pop("dash_upload_preview_token", None)
+            unmapped = find_unmapped_customers(merged_storage)
             st.session_state.dash_unmapped_customers = unmapped
 
             st.session_state.dashboard_msg = (
                 f"Update complete · Added {added_rows:,} new rows · "
                 f"Skipped {duplicate_rows:,} duplicates · "
-                f"Total {len(merged_df):,} rows"
+                f"Total {len(merged_storage):,} rows"
             )
             if not unmapped.empty:
                 st.session_state.dashboard_msg += (
@@ -383,11 +413,12 @@ def apply_data_source_selection(dataset_mode: str, hs_codes: list[str] | None = 
 
 
     if current_df is not None and current_source == dataset_label:
-
-        if has_ml_target_columns(current_df):
-
+        refreshed = prepare_dataframe_for_analysis(
+            current_df, hs_codes=hs_codes, path=load_path
+        )
+        set_dataframe(refreshed, dataset_label)
+        if has_ml_target_columns(refreshed):
             st.session_state.dashboard_ml_ready = True
-
         return
 
     try:

@@ -13,8 +13,6 @@ from config.settings import (
     TEMP_DIR,
 )
 
-USER_DATA_SUFFIXES = {".csv", ".xlsx", ".xls"}
-
 
 def ensure_storage_dirs() -> None:
     """Create data/, app_data/, temp/, app_config/ if missing."""
@@ -70,36 +68,6 @@ def temp_file_path(prefix: str, filename: str) -> Path:
     ensure_storage_dirs()
     safe_name = Path(filename).name
     return TEMP_DIR / f"_{prefix}_{safe_name}"
-
-
-def is_user_dataset_file(path: Path) -> bool:
-    """True for user CSV/Excel in data/, excluding temp-style names and app config."""
-    if not path.is_file():
-        return False
-    if path.suffix.lower() not in USER_DATA_SUFFIXES:
-        return False
-    if path.name.lower() in APP_REFERENCE_DATA_FILENAMES:
-        return False
-    if path.name.startswith("_"):
-        return False
-    try:
-        path.resolve().relative_to(DATA_DIR.resolve())
-    except ValueError:
-        return False
-    return True
-
-
-def list_user_data_files(include_subdirs: bool = False) -> list[Path]:
-    """List dataset files under data/ for Train / Predict pickers (not app_data seeds)."""
-    ensure_storage_dirs()
-    if not DATA_DIR.exists():
-        return []
-    paths: list[Path] = []
-    candidates = DATA_DIR.rglob("*") if include_subdirs else DATA_DIR.iterdir()
-    for p in candidates:
-        if is_user_dataset_file(p):
-            paths.append(p)
-    return sorted(paths, key=lambda p: p.stat().st_mtime, reverse=True)
 
 
 def migrate_storage_layout() -> None:

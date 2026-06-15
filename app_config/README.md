@@ -1,10 +1,9 @@
-# App configuration files
-
-This folder holds **application reference data** used by ETL and cleaning — not user upload datasets.
+# Application reference data (not user upload datasets).
 
 | File | Purpose |
 |------|---------|
-| `delete_description.csv` | Description blacklist for ETL (`OrderDataPipeline` rows filter) |
-| `list_remove.csv` | Optional words/phrases to strip from descriptions (via `load_words_to_remove`) |
+| `customer_list.csv` | Customer short-name mapping for ETL and the sidebar panel |
 
-User CSV/Excel uploads and default analysis files belong in **`data/`** only.
+User CSV/Excel uploads and merged analysis files belong in **`data/`**. Seed defaults live in **`app_data/`**.
+
+Description blacklist terms are configured in **`config/settings.py`** (`DESCRIPTION_BLACKLIST_TERMS`).

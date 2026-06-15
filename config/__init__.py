@@ -1,1 +1,1 @@
-from config.settings import *  # noqa: F403
+# Package marker — import from config.settings directly.

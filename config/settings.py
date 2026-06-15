@@ -176,17 +176,10 @@ DESCRIPTION_BLACKLIST_EXTRA_BY_PRODUCT: dict[str, list[str]] = {
     "TDI": [],
 }
 
-# Deprecated — kept for docs only; terms live in settings above
-BLACKLIST_FILE = str(APP_CONFIG_DIR / "delete_description.csv")
-LIST_REMOVE_FILE = str(APP_CONFIG_DIR / "list_remove.csv")
-
-# Backward-compatible alias (do not use — edit DESCRIPTION_BLACKLIST_* above)
-PMDI_DESCRIPTION_BLACKLIST_EXTRAS: list[str] = []
+# Deprecated — blacklist terms live in DESCRIPTION_BLACKLIST_* above
 
 # Filenames that must not live under data/ (kept in app_config/)
-APP_REFERENCE_DATA_FILENAMES = frozenset(
-    {"delete_description.csv", "list_remove.csv", "customer_list.csv"}
-)
+APP_REFERENCE_DATA_FILENAMES = frozenset({"customer_list.csv"})
 
 CUSTOMER_LIST_FILE = APP_CONFIG_DIR / "customer_list.csv"
 
@@ -215,9 +208,10 @@ SALER_NAME_REGEX_REMOVE: list[str] = [
     r"\bcong\s+ty\b",
     r"\bcty\b",
     r"\btnhh\b",
-    # English / Singapore / international
+    # English / Singapore / international (longest phrases first)
     r"\bthe\b",
     r"\bprivate\s+limited\b",
+    r"\bprivate\b",  # standalone, e.g. DOW CHEMICAL PACIFIC SINGAPORE PRIVATE
     r"\bpublic\s+limited\s+company\b",
     r"\bpte\.?\s*ltd\.?\b",
     r"\bpvt\.?\s*ltd\.?\b",

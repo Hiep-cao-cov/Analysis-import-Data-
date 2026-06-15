@@ -5,20 +5,13 @@ from pathlib import Path
 
 import pandas as pd
 
-from config.settings import DATA_DIR, MDI_HS_CODES, ML_COLUMN_CONFIG
+from config.settings import MDI_HS_CODES
 from services.etl_service import run_etl
 from services.customer_name_service import apply_customer_short_names
 from services.saler_name_service import apply_saler_name_standardization
 from services.type_sale_service import apply_type_sale_column, product_line_for_hs_codes
 from services.ml_columns import normalize_ml_column_names
 from services.sale_channel_service import add_sale_channel_column
-
-_ML_FEATURE_COLUMNS = (
-    ML_COLUMN_CONFIG["hs_code"],
-    ML_COLUMN_CONFIG["product_description"],
-    ML_COLUMN_CONFIG["saler"],
-    ML_COLUMN_CONFIG["country_origin"],
-)
 
 STANDARDIZED_MARKERS = {"hs_code", "description", "customer_id", "total_usd"}
 RAW_MARKERS = {"hs code", "chung loai hang hoa xuat nhap", "ma doanh nghiep", "tri gia usd"}
@@ -38,10 +31,10 @@ def is_standardized_dataset(df: pd.DataFrame) -> bool:
     return len(cols & STANDARDIZED_MARKERS) >= 3
 
 
-def is_prediction_export(df: pd.DataFrame) -> bool:
+def is_prediction_upload_format(df: pd.DataFrame) -> bool:
     """
-    True for CSV/Excel saved from Predict new (or equivalent): filled
-    BRAND NAME / SUPPLIER / TYPE plus standardized import columns.
+    Prediction CSV with Vietnamese customs headers + ML columns
+    (e.g. predictions_pmdi_4_5_2026.csv) — always needs full ETL on upload.
     """
     from services.ml_columns import has_ml_target_columns, normalize_ml_column_names
 
@@ -49,19 +42,22 @@ def is_prediction_export(df: pd.DataFrame) -> bool:
     if not has_ml_target_columns(out):
         return False
     cols = _normalize_columns(out)
-    return "hs_code" in cols or len(cols & STANDARDIZED_MARKERS) >= 3
+    return bool(cols & RAW_MARKERS) and "hs_code" not in cols
 
 
-def resolve_ingest_force_etl(preview: pd.DataFrame) -> bool:
-    """Skip full ETL when upload is already a prediction export or standardized dataset."""
-    if is_prediction_export(preview) or is_standardized_dataset(preview):
-        return False
-    return is_raw_customs_export(preview)
-
-
-def has_ml_feature_columns(df: pd.DataFrame) -> bool:
-    """True when hs_code, description, saler, country_origin exist (ETL output names)."""
-    return all(col in df.columns for col in _ML_FEATURE_COLUMNS)
+def run_upload_etl(
+    source: Path,
+    *,
+    hs_codes: list[str] | None = None,
+    unit_filter: str = "kg",
+) -> pd.DataFrame:
+    """Full ETL pipeline for uploads — same steps as run_etl, explicit entry point."""
+    codes = hs_codes if hs_codes else infer_hs_codes_for_path(source)
+    return run_etl(
+        source,
+        hs_codes=codes,
+        unit_filter=unit_filter or None,
+    )
 
 
 def infer_hs_codes_for_path(path: Path) -> list[str] | None:
@@ -74,30 +70,6 @@ def infer_hs_codes_for_path(path: Path) -> list[str] | None:
     if "pmdi" in name or "mdi" in name:
         return MDI_HS_CODES
     return None
-
-
-def load_for_ml(
-    source: Path | str,
-    *,
-    unit_filter: str = "kg",
-    hs_codes: list[str] | None = None,
-) -> pd.DataFrame:
-    """
-    Load a training/inference file: run ETL when raw or missing feature columns,
-    then normalize BRAND NAME / SUPPLIER / TYPE headers.
-    """
-    path = Path(source)
-    df = load_file(path)
-    hs_codes = infer_hs_codes_for_path(path) if hs_codes is None else hs_codes
-
-    if is_raw_customs_export(df) or not has_ml_feature_columns(df):
-        df, _ = load_and_standardize(
-            path,
-            unit_filter=unit_filter,
-            force_etl=True,
-            hs_codes=hs_codes,
-        )
-    return apply_customer_short_names(normalize_ml_column_names(df))
 
 
 def load_file(path: Path) -> pd.DataFrame:

@@ -15,6 +15,29 @@ from ui.dashboard_market import render_market_page
 from ui.dashboard_supplier import render_supplier_page
 
 
+def render_upload_pending_message() -> None:
+    """Main-area hint when Upload new file is selected but dashboards are not ready yet."""
+    uploaded = st.session_state.get("dash_sidebar_upload")
+    if uploaded is None:
+        st.info(
+            "Upload a CSV or Excel file in the sidebar (**Dataset & data source**). "
+            "After ETL, dashboards will show **upload data only** until you click **Update data**."
+        )
+        return
+
+    if not st.session_state.get("dashboard_ml_ready", False):
+        from ui.upload_preview_panel import get_upload_preview
+
+        preview = get_upload_preview(uploaded) if uploaded is not None else None
+        if preview is not None and preview.dataset_mismatch:
+            st.warning(preview.error or "This upload does not match the selected dataset.")
+            return
+        st.warning(
+            "This upload is missing **BRAND NAME**, **SUPPLIER**, or **TYPE** "
+            "(see sidebar preview). Run **Predict new** in the ML app, then upload the prediction CSV."
+        )
+
+
 def render_analysis_page(
     set_active_df,
     dataset_mode: str,
@@ -24,8 +47,12 @@ def render_analysis_page(
     apply_data_source_selection(dataset_mode, hs_codes=hs_codes)
 
     load_path = resolve_analysis_dataset(dataset_mode)
+    source_mode = st.session_state.get("dash_source_mode", "Use default file")
     df = get_dataframe()
     if df is None:
+        if source_mode == "Upload new file":
+            render_upload_pending_message()
+            return
         if not load_path.exists():
             st.error(
                 f"Place seed data in `app_data/{load_path.name}` or upload a file in the sidebar. "
@@ -48,13 +75,3 @@ def render_analysis_page(
         render_customer_page(df, dataset_label)
     else:
         render_market_page(df, dataset_label)
-
-
-def render_dashboard_page(
-    set_active_df,
-    dataset_mode: str,
-    dataset_label: str = "MDI",
-    hs_codes: list[str] | None = None,
-) -> None:
-    """Backwards-compatible alias for the analysis router."""
-    render_analysis_page(set_active_df, dataset_mode, dataset_label=dataset_label, hs_codes=hs_codes)

@@ -50,9 +50,9 @@ def _compiled_paren_remove_patterns() -> tuple[re.Pattern[str], ...]:
     return tuple(patterns)
 
 
-@lru_cache(maxsize=1)
-def _compiled_remove_patterns() -> tuple[re.Pattern[str], ...]:
-    return tuple(re.compile(p, re.IGNORECASE) for p in SALER_NAME_REGEX_REMOVE)
+@lru_cache(maxsize=4)
+def _compiled_remove_patterns(patterns_key: tuple[str, ...]) -> tuple[re.Pattern[str], ...]:
+    return tuple(re.compile(p, re.IGNORECASE) for p in patterns_key)
 
 
 @lru_cache(maxsize=1)
@@ -92,8 +92,38 @@ def apply_saler_paren_keyword_removals(text: str) -> str:
 def apply_saler_regex_removals(text: str) -> str:
     """Apply SALER_NAME_REGEX_REMOVE to already-lowercased saler text."""
     out = text
-    for pattern in _compiled_remove_patterns():
-        out = pattern.sub(" ", out)
+    patterns = _compiled_remove_patterns(tuple(SALER_NAME_REGEX_REMOVE))
+    for _ in range(3):
+        prev = out
+        for pattern in patterns:
+            out = pattern.sub(" ", out)
+        out = _collapse_spaces(out)
+        if out == prev:
+            break
+    return out
+
+
+def _strip_trailing_legal_suffixes(text: str) -> str:
+    """Remove trailing PRIVATE / LIMITED / PTE LTD (repeat until stable)."""
+    out = _collapse_spaces(text)
+    trailing = (
+        r"\s+private\s+limited\s*$",
+        r"\s+private\s*$",
+        r"\s+limited\s*$",
+        r"\s+pte\.?\s*ltd\.?\s*$",
+        r"\s+pvt\.?\s*ltd\.?\s*$",
+        r"\s+ltd\.?\s*$",
+        r"\s+inc\.?\s*$",
+        r"\s+co\.?\s*$",
+    )
+    changed = True
+    while changed:
+        changed = False
+        for pat in trailing:
+            new = re.sub(pat, "", out, flags=re.IGNORECASE).strip()
+            if new != out:
+                out = new
+                changed = True
     return _collapse_spaces(out)
 
 
@@ -164,6 +194,7 @@ def process_saler_name(value) -> str:
             apply_saler_regex_removals(apply_saler_paren_keyword_removals(prepared))
         )
     )
+    cleaned = _strip_trailing_legal_suffixes(cleaned)
 
     mapped = apply_saler_regex_map(cleaned)
     if mapped:
@@ -176,11 +207,6 @@ def process_saler_name(value) -> str:
             return _finalize_saler_label(lookup[key])
 
     return _finalize_saler_label(cleaned)
-
-
-def canonicalize_saler_name(value) -> str:
-    """Alias for process_saler_name."""
-    return process_saler_name(value)
 
 
 def apply_saler_name_standardization(df: pd.DataFrame) -> pd.DataFrame:

@@ -7,12 +7,8 @@ from pathlib import Path
 import pandas as pd
 
 from config.settings import COL_BRAND_NAME, COL_SUPPLIER, COL_TYPE
-from services.data_loader_service import (
-    is_prediction_export,
-    is_raw_customs_export,
-    is_standardized_dataset,
-    resolve_ingest_force_etl,
-)
+from services.upload_dataset_validation import validate_upload_dataset_match
+from services.upload_ingest_service import classify_upload_format
 from services.data_paths import resolve_analysis_dataset
 from services.ml_columns import has_ml_target_columns, missing_ml_target_names
 
@@ -36,37 +32,21 @@ class UploadPreviewResult:
     duplicate_rows: int = 0
     total_after_merge: int = 0
     already_merged: bool = False
+    dataset_mismatch: bool = False
     sample: pd.DataFrame | None = None
+    processed_csv: bytes | None = None
+    processed_download_name: str = ""
 
-    def as_dict(self) -> dict:
-        return {
-            "file_name": self.file_name,
-            "file_kind": self.file_kind,
-            "row_count": self.row_count,
-            "ml_ready": self.ml_ready,
-            "ready_for_merge": self.ready_for_merge,
-            "missing_ml_columns": list(self.missing_ml_columns),
-            "warnings": list(self.warnings),
-            "error": self.error,
-            "upload_coverage": self.upload_coverage,
-            "base_coverage": self.base_coverage,
-            "base_row_count": self.base_row_count,
-            "new_rows": self.new_rows,
-            "duplicate_rows": self.duplicate_rows,
-            "total_after_merge": self.total_after_merge,
-            "already_merged": self.already_merged,
-            "sample": self.sample,
-        }
+def build_processed_download_payload(df: pd.DataFrame, original_file_name: str) -> tuple[bytes, str]:
+    """CSV bytes + filename for ETL-processed upload (utf-8-sig, same schema as merge)."""
+    stem = Path(original_file_name).stem or "upload"
+    filename = f"processed_{stem}.csv"
+    csv_text = df.to_csv(index=False, encoding="utf-8-sig")
+    return csv_text.encode("utf-8-sig"), filename
 
 
 def classify_upload_headers(df: pd.DataFrame) -> str:
-    if is_prediction_export(df):
-        return "Prediction export"
-    if is_standardized_dataset(df):
-        return "Standardized dataset"
-    if is_raw_customs_export(df):
-        return "Raw customs (ETL on merge)"
-    return "Unrecognized format"
+    return classify_upload_format(df)
 
 
 def format_date_coverage(df: pd.DataFrame | None) -> str | None:
@@ -130,6 +110,10 @@ def _sample_preview_df(df: pd.DataFrame, limit: int = 5) -> pd.DataFrame:
         "date",
         "year",
         "month",
+        "quarter",
+        "type_sale",
+        "Sale_chanel",
+        "saler",
         "customer_name",
         "hs_code",
         "volume",
@@ -154,7 +138,6 @@ def build_upload_preview(
     ingest_file_fn,
     load_default_data_fn,
     append_only_new_rows_fn,
-    prepare_dataset_for_storage_fn,
 ) -> UploadPreviewResult:
     """
     Parse upload, validate ML columns, and dry-run merge against saved dataset.
@@ -177,11 +160,25 @@ def build_upload_preview(
             header_preview = pd.read_excel(temp_path, nrows=20)
         header_preview.columns = [str(c).strip() for c in header_preview.columns]
         result.file_kind = classify_upload_headers(header_preview)
-        force_etl = resolve_ingest_force_etl(header_preview)
 
-        incoming_df = ingest_file_fn(temp_path, force_etl=force_etl, hs_codes=hs_codes)
-        incoming_df = prepare_dataset_for_storage_fn(incoming_df)
+        mismatch_msg = validate_upload_dataset_match(
+            header_preview,
+            dataset_mode=dataset_mode,
+            file_name=file_name,
+        )
+        if mismatch_msg:
+            result.dataset_mismatch = True
+            result.error = mismatch_msg
+            result.ml_ready = False
+            result.ready_for_merge = False
+            return result
+
+        incoming_df = ingest_file_fn(temp_path, hs_codes=hs_codes)
         result.row_count = len(incoming_df)
+        if not incoming_df.empty:
+            result.processed_csv, result.processed_download_name = build_processed_download_payload(
+                incoming_df, file_name
+            )
         result.upload_coverage = format_date_coverage(incoming_df)
         result.sample = _sample_preview_df(incoming_df)
 

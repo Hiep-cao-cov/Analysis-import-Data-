@@ -165,24 +165,3 @@ def render_styled_table(
     )
     st.caption("Scroll vertically and horizontally to view all rows and columns.")
     st.markdown("</div>", unsafe_allow_html=True)
-
-
-def render_customer_summary_table(detail: dict) -> None:
-    """Single-row summary after selecting a customer on the bar chart."""
-    table = pd.DataFrame(
-        [
-            {
-                "Customer name": detail.get("customer_name", "—"),
-                "Volume (ton)": round(float(detail.get("volume_ton", 0)), 3),
-                "Share (%)": float(detail.get("share_pct", 0)),
-            }
-        ]
-    )
-    render_styled_table(
-        table,
-        title="Customer detail",
-        subtitle="Selected customer · volume and share of supplier sales in this period",
-        export_filename="customer_detail.csv",
-        max_height_px=120,
-        show_export=False,
-    )
