@@ -2864,6 +2864,45 @@ def _filter_supplier_customer_scope(
     return base, group_col
 
 
+def _customer_display_lookup(scope: pd.DataFrame, group_col: str) -> dict[str, str]:
+    """Map buyer group key → display label for chart hovers."""
+    lookup: dict[str, str] = {}
+    if scope.empty:
+        return lookup
+
+    if group_col == "customer_id":
+        has_name = "customer_name" in scope.columns
+        for _, row in scope.iterrows():
+            key = normalize_customer_id(row.get("customer_id"))
+            if not key:
+                continue
+            if has_name:
+                raw_name = str(row.get("customer_name", "")).strip()
+                if raw_name and raw_name.lower() not in {"nan", "none"}:
+                    label = format_customer_display_name(raw_name, max_len=64)
+                else:
+                    label = key
+            else:
+                label = key
+            lookup.setdefault(key, label)
+        return lookup
+
+    for val in scope[group_col].dropna().astype(str).str.strip():
+        if val and val.lower() not in {"nan", "none"}:
+            lookup.setdefault(val, format_customer_display_name(val, max_len=64))
+    return lookup
+
+
+def _new_customer_hover_text(names: list[str], *, max_show: int = 25) -> str:
+    if not names:
+        return "No new customers"
+    shown = names[:max_show]
+    text = "<br>".join(shown)
+    if len(names) > max_show:
+        text += f"<br>… and {len(names) - max_show} more"
+    return text
+
+
 def _normalized_buyer_set(frame: pd.DataFrame, group_col: str) -> set[str]:
     if frame.empty:
         return set()
@@ -2905,7 +2944,14 @@ def build_supplier_customer_new_current_data(
     then cumulative within that year.
     """
     empty = pd.DataFrame(
-        columns=[period_col, "current_count", "new_count", "customer_count", "period_label"]
+        columns=[
+            period_col,
+            "current_count",
+            "new_count",
+            "customer_count",
+            "period_label",
+            "new_customer_names",
+        ]
     )
     scope, group_col = _filter_supplier_customer_scope(
         df,
@@ -2922,8 +2968,24 @@ def build_supplier_customer_new_current_data(
         work["_year_int"] = pd.to_numeric(work["year"], errors="coerce")
 
     work[period_col] = work[period_col].astype(str).str.strip().str.lower()
+    label_lookup = _customer_display_lookup(scope, group_col)
     rows: list[dict] = []
     cumulative: set[str] = set()
+
+    def _append_row(period_key: str, buyers: set[str], cumulative_set: set[str]) -> None:
+        current = buyers & cumulative_set
+        new = buyers - cumulative_set
+        new_names = sorted(label_lookup.get(k, k) for k in new)
+        rows.append(
+            {
+                period_col: period_key,
+                "current_count": len(current),
+                "new_count": len(new),
+                "customer_count": len(buyers),
+                "period_label": _period_display_label(period_col, period_key),
+                "new_customer_names": new_names,
+            }
+        )
 
     if period_col == "year":
         if "_year_int" not in work.columns:
@@ -2933,17 +2995,7 @@ def build_supplier_customer_new_current_data(
         for year_key in period_keys:
             y = int(year_key)
             buyers = _normalized_buyer_set(work[work["_year_int"] == y], group_col)
-            current = buyers & cumulative
-            new = buyers - cumulative
-            rows.append(
-                {
-                    period_col: year_key,
-                    "current_count": len(current),
-                    "new_count": len(new),
-                    "customer_count": len(buyers),
-                    "period_label": _period_display_label(period_col, year_key),
-                }
-            )
+            _append_row(year_key, buyers, cumulative)
             cumulative |= buyers
     elif period_col == "quarter":
         if year_int is None or "_year_int" not in work.columns:
@@ -2952,17 +3004,7 @@ def build_supplier_customer_new_current_data(
         year_slice = work[work["_year_int"] == year_int].copy()
         for q in QUARTER_ORDER:
             buyers = _normalized_buyer_set(year_slice[year_slice[period_col] == q], group_col)
-            current = buyers & cumulative
-            new = buyers - cumulative
-            rows.append(
-                {
-                    period_col: q,
-                    "current_count": len(current),
-                    "new_count": len(new),
-                    "customer_count": len(buyers),
-                    "period_label": _period_display_label(period_col, q),
-                }
-            )
+            _append_row(q, buyers, cumulative)
             cumulative |= buyers
     elif period_col == "month":
         if year_int is None or "_year_int" not in work.columns:
@@ -2971,17 +3013,7 @@ def build_supplier_customer_new_current_data(
         year_slice = work[work["_year_int"] == year_int].copy()
         for m in MONTH_ORDER:
             buyers = _normalized_buyer_set(year_slice[year_slice[period_col] == m], group_col)
-            current = buyers & cumulative
-            new = buyers - cumulative
-            rows.append(
-                {
-                    period_col: m,
-                    "current_count": len(current),
-                    "new_count": len(new),
-                    "customer_count": len(buyers),
-                    "period_label": _period_display_label(period_col, m),
-                }
-            )
+            _append_row(m, buyers, cumulative)
             cumulative |= buyers
     else:
         return empty
@@ -3014,6 +3046,14 @@ def render_supplier_customer_new_current_stacked_chart(
     import plotly.graph_objects as go
 
     labels = df["period_label"].astype(str).tolist()
+    if "new_customer_names" in df.columns:
+        new_hover = [
+            _new_customer_hover_text(list(names) if names is not None else [])
+            for names in df["new_customer_names"]
+        ]
+    else:
+        new_hover = ["No new customers"] * len(df)
+
     fig = go.Figure()
     fig.add_trace(
         go.Bar(
@@ -3021,6 +3061,7 @@ def render_supplier_customer_new_current_stacked_chart(
             x=labels,
             y=df["current_count"].tolist(),
             marker_color=CHART["blue"],
+            hovertemplate="%{x}<br>Repeat buyer: %{y}<extra></extra>",
         )
     )
     fig.add_trace(
@@ -3029,6 +3070,13 @@ def render_supplier_customer_new_current_stacked_chart(
             x=labels,
             y=df["new_count"].tolist(),
             marker_color=CHART["green"],
+            customdata=new_hover,
+            hovertemplate=(
+                "%{x}<br>"
+                "New to this supplier: %{y}<br>"
+                "%{customdata}"
+                "<extra></extra>"
+            ),
         )
     )
     fig.update_layout(
@@ -3054,6 +3102,7 @@ def render_supplier_customer_new_current_stacked_chart(
         "period (same material type and sale channel as selected above). "
         "**New to this supplier**: customer's **first purchase from this supplier** in the filtered "
         "data — purchases from other suppliers are not counted. "
+        "Hover the green segment to see new customer names. "
         "Quarterly/monthly: buyers before Q1/Jan include all prior years."
     )
 

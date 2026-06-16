@@ -78,6 +78,32 @@ def temp_file_path(prefix: str, filename: str) -> Path:
     return TEMP_DIR / f"_{prefix}_{safe_name}"
 
 
+_temp_dir_cleared = False
+
+
+def clear_temp_dir_on_startup() -> None:
+    """Delete all files in temp/ once per Streamlit server process (not each rerun)."""
+    global _temp_dir_cleared
+    if _temp_dir_cleared:
+        return
+    _temp_dir_cleared = True
+
+    ensure_storage_dirs()
+    if not TEMP_DIR.is_dir():
+        return
+
+    for path in TEMP_DIR.iterdir():
+        if path.name == ".gitkeep":
+            continue
+        try:
+            if path.is_file() or path.is_symlink():
+                path.unlink()
+            elif path.is_dir():
+                shutil.rmtree(path)
+        except OSError:
+            continue
+
+
 def migrate_storage_layout() -> None:
     """
     One-time layout fix: seed CSVs → app_data/, temp _* files → temp/,

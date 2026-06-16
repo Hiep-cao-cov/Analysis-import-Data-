@@ -17,7 +17,7 @@ from config.settings import (
     PROJECT_ROOT,
     TEMP_DIR,
 )
-from services.data_paths import migrate_storage_layout
+from services.data_paths import clear_temp_dir_on_startup, migrate_storage_layout
 from ui.analysis import render_analysis_page
 from ui.analysis_data import apply_data_source_selection
 from ui.sidebar_analysis import render_analysis_sidebar, sync_dataset_mode_from_sidebar
@@ -102,6 +102,7 @@ def page_settings() -> None:
 def main() -> None:
     init_session_state()
     migrate_storage_layout()
+    clear_temp_dir_on_startup()
 
     if st.session_state.get("nav_page", "insights") == "insights":
         sync_dataset_mode_from_sidebar()
