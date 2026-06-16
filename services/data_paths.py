@@ -30,9 +30,17 @@ def normalize_dataset_mode(mode: str) -> str:
 
 
 def seed_dataset_path(mode: str) -> Path:
-    """Read-only app default dataset (MDI / TDI seed files)."""
+    """Read-only app default dataset (MDI / TDI seed files in app_data/)."""
     key = normalize_dataset_mode(mode)
     return DEFAULT_DATASETS_DIR / DEFAULT_DATASET_FILENAMES[key]
+
+
+def default_dashboard_dataset_path(mode: str) -> Path:
+    """
+    Dataset for **Use default file** dashboards (MDI and TDI).
+    Always the app_data seed — never the merged copy under data/.
+    """
+    return seed_dataset_path(mode)
 
 
 def is_seed_dataset_path(path: Path) -> bool:
@@ -51,7 +59,7 @@ def user_dataset_path(mode: str) -> Path:
 
 
 def resolve_analysis_dataset(mode: str) -> Path:
-    """Load from data/ if present, otherwise app seed in app_data/."""
+    """Merge / upload working copy: data/ if present, else app_data seed."""
     user = user_dataset_path(mode)
     if user.is_file():
         return user

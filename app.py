@@ -137,10 +137,6 @@ def main() -> None:
         st.caption(f"© {datetime.now().year} · MDI Data Analysis")
 
     if nav == "insights":
-        apply_data_source_selection(
-            dataset_mode=mode,
-            hs_codes=ANALYSIS_HS_CODE_OPTIONS.get(mode, ANALYSIS_HS_CODE_OPTIONS["MDI"]),
-        )
         render_analysis_page(
             _noop_set_active_df,
             dataset_mode=mode,

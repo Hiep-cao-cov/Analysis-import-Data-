@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from services.data_paths import resolve_analysis_dataset
+from services.data_paths import default_dashboard_dataset_path, resolve_analysis_dataset
 from services.ml_columns import has_ml_target_columns
 from ui.analysis_data import (
     apply_data_source_selection,
@@ -46,8 +46,12 @@ def render_analysis_page(
 ) -> None:
     apply_data_source_selection(dataset_mode, hs_codes=hs_codes)
 
-    load_path = resolve_analysis_dataset(dataset_mode)
     source_mode = st.session_state.get("dash_source_mode", "Use default file")
+    load_path = (
+        default_dashboard_dataset_path(dataset_mode)
+        if source_mode == "Use default file"
+        else resolve_analysis_dataset(dataset_mode)
+    )
     df = get_dataframe()
     if df is None:
         if source_mode == "Upload new file":

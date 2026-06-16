@@ -82,7 +82,7 @@ def _supplier_year_scope(
     scoped = filter_by_material_type(scoped, material_type, type_col=type_col)
     if "year" not in scoped.columns:
         return scoped
-    return scoped[scoped["year"] == year_int].copy()
+    return scoped[pd.to_numeric(scoped["year"], errors="coerce") == year_int].copy()
 
 
 def _supplier_period_scope(
@@ -94,15 +94,19 @@ def _supplier_period_scope(
     type_col: str,
     period_mode: str,
     year_int: int,
+    selected_quarter: str | None = None,
+    selected_month: str | None = None,
 ) -> pd.DataFrame:
-    """Rows for selected supplier matching the active Period mode scope."""
+    """Rows for selected supplier, sidebar year, and Period (year / quarter / month)."""
     scoped = df_channel[df_channel[supplier_col].astype(str).str.strip() == str(supplier).strip()]
     scoped = filter_by_material_type(scoped, material_type, type_col=type_col)
-    if period_mode == "Yearly":
-        return scoped
-    if "year" not in scoped.columns:
-        return scoped
-    return scoped[scoped["year"] == year_int].copy()
+    if "year" in scoped.columns:
+        scoped = scoped[pd.to_numeric(scoped["year"], errors="coerce") == year_int]
+    if period_mode == "Quarterly" and selected_quarter:
+        scoped = _filter_quarter_scope(scoped, selected_quarter)
+    elif period_mode == "Monthly" and selected_month:
+        scoped = _filter_month_scope(scoped, selected_month)
+    return scoped.copy()
 
 
 def _render_period_controls(
@@ -172,7 +176,25 @@ def _render_period_controls(
                     disabled=True,
                     key="sup_month_select_empty",
                 )
-    return period_mode, f"Full year {year}", selected_quarter, selected_month
+    return period_mode, _period_detail_label(
+        period_mode, year, int(year), selected_quarter, selected_month
+    ), selected_quarter, selected_month
+
+
+def _period_detail_label(
+    period_mode: str,
+    year: str,
+    year_int: int,
+    selected_quarter: str | None,
+    selected_month: str | None,
+) -> str:
+    if period_mode == "Yearly":
+        return f"Full year {year}"
+    if period_mode == "Quarterly" and selected_quarter:
+        return f"{year_int} · {str(selected_quarter).upper()}"
+    if period_mode == "Monthly" and selected_month:
+        return f"{year_int} · {_month_display_label(selected_month)}"
+    return f"Year {year_int}"
 
 
 def _month_display_label(month_key: str) -> str:
@@ -235,8 +257,8 @@ def _type_sale_pie_scope(
     selected_quarter: str | None,
     selected_month: str | None,
 ) -> pd.DataFrame:
-    """Supplier rows for the active period (year / quarter / month) — ignores type_sale filter."""
-    scoped = _supplier_period_scope(
+    """Supplier rows for the active period — ignores type_sale filter."""
+    return _supplier_period_scope(
         df_channel,
         supplier=supplier,
         supplier_col=supplier_col,
@@ -244,12 +266,9 @@ def _type_sale_pie_scope(
         type_col=type_col,
         period_mode=period_mode,
         year_int=year_int,
+        selected_quarter=selected_quarter,
+        selected_month=selected_month,
     )
-    if period_mode == "Quarterly" and selected_quarter:
-        return _filter_quarter_scope(scoped, selected_quarter)
-    if period_mode == "Monthly" and selected_month:
-        return _filter_month_scope(scoped, selected_month)
-    return scoped
 
 
 def _type_sale_period_caption(
@@ -437,6 +456,8 @@ def render_supplier_page(df: pd.DataFrame, dataset_label: str) -> None:
         type_col=type_col,
         period_mode=period_mode,
         year_int=year_int,
+        selected_quarter=selected_quarter,
+        selected_month=selected_month,
     )
     type_sale_pie_scope = _type_sale_pie_scope(
         df_channel_pie,
@@ -703,11 +724,17 @@ def render_supplier_page(df: pd.DataFrame, dataset_label: str) -> None:
         if period_scope.empty:
             st.warning("No shipment rows for the current filters.")
         else:
+            type_sale_label = (
+                ""
+                if str(type_sale).strip().upper() == TYPE_SALE_FILTER_ALL.upper()
+                else f" · {str(type_sale).strip().upper()}"
+            )
             render_styled_table(
                 prepare_shipment_detail_table(period_scope),
                 title="Shipment detail",
                 subtitle=(
-                    f"All import rows · {supplier} · {sale_channel} · {period_label} · {material_type}"
+                    f"All import rows · {supplier} · {sale_channel}{type_sale_label}"
+                    f" · {period_label} · {material_type}"
                 ),
                 export_filename="supplier_shipment_detail.csv",
             )

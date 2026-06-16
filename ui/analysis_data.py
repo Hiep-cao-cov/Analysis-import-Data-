@@ -20,6 +20,7 @@ from services.data_loader_service import load_and_standardize, load_file
 from services.upload_ingest_service import ingest_upload_file, load_storage_dataset
 from services.data_paths import (
     analysis_dataset_save_path,
+    default_dashboard_dataset_path,
     is_seed_dataset_path,
     resolve_analysis_dataset,
     temp_file_path,
@@ -67,10 +68,6 @@ def load_seed_dataset_for_analysis(
     Applies customer short names + saler/type_sale in memory; seed file on disk is not modified.
     """
     df = load_file(source)
-    product_line = product_line_for_hs_codes(hs_codes, path=source)
-    df = apply_customer_short_names(df)
-    df = apply_saler_name_standardization(df)
-    df = apply_type_sale_column(df, product_line=product_line)
     return prepare_dataframe_for_analysis(df, hs_codes=hs_codes, path=source)
 
 
@@ -84,6 +81,8 @@ def prepare_dataframe_for_analysis(
     if df.empty:
         return df
     product_line = product_line_for_hs_codes(hs_codes, path=path)
+    if path is None or is_seed_dataset_path(path):
+        df = apply_customer_short_names(df)
     df = apply_saler_name_standardization(df)
     df = apply_type_sale_column(df, product_line=product_line)
     return add_volume_ton(prepare_analysis_frame(df))
@@ -140,6 +139,22 @@ def set_dataframe(df: pd.DataFrame, source_name: str) -> None:
 
 
 
+def _merge_key_columns(df: pd.DataFrame) -> list[str]:
+    """Shipment identity columns for upload merge only (not used on default file load)."""
+    key_priority = [
+        "date",
+        "hs_code",
+        "customer_id",
+        "customer_name",
+        COL_SUPPLIER,
+        COL_TYPE,
+        COL_BRAND_NAME,
+        "volume",
+        "total_usd",
+    ]
+    return [c for c in key_priority if c in df.columns]
+
+
 def build_row_signature(df: pd.DataFrame, key_cols: list[str]) -> pd.Series:
 
     norm = pd.DataFrame(index=df.index)
@@ -161,46 +176,10 @@ def build_row_signature(df: pd.DataFrame, key_cols: list[str]) -> pd.Series:
     return pd.util.hash_pandas_object(norm, index=False).astype(str)
 
 
-
-
-
 def append_only_new_rows(base_df: pd.DataFrame, incoming_df: pd.DataFrame) -> tuple[pd.DataFrame, int, int]:
 
-    key_priority = [
-
-        "date",
-
-        "hs_code",
-
-        "customer_id",
-
-        "customer_name",
-
-        COL_SUPPLIER,
-
-        COL_TYPE,
-
-        COL_BRAND_NAME,
-
-        "saler",
-
-        "description",
-
-        "volume",
-
-        "volume_ton",
-
-        "total_usd",
-
-        "transaction",
-
-        "supplier_raw",
-
-        "type_clean",
-
-    ]
-
-    key_cols = [c for c in key_priority if c in base_df.columns and c in incoming_df.columns]
+    key_cols = _merge_key_columns(base_df)
+    key_cols = [c for c in key_cols if c in incoming_df.columns]
 
     if not key_cols:
 
@@ -277,11 +256,14 @@ def render_ml_columns_required_message(df: pd.DataFrame | None = None) -> None:
 
 def apply_data_source_selection(dataset_mode: str, hs_codes: list[str] | None = None) -> None:
 
-    load_path = resolve_analysis_dataset(dataset_mode)
     save_path = analysis_dataset_save_path(dataset_mode)
     dataset_label = save_path.name
-
     source_mode = st.session_state.get("dash_source_mode", "Use default file")
+    load_path = (
+        default_dashboard_dataset_path(dataset_mode)
+        if source_mode == "Use default file"
+        else resolve_analysis_dataset(dataset_mode)
+    )
 
     current_source = st.session_state.get("dashboard_source")
 
@@ -366,7 +348,8 @@ def apply_data_source_selection(dataset_mode: str, hs_codes: list[str] | None = 
 
             with st.spinner("Merging with current dataset..."):
 
-                base_df = load_storage_dataset(load_path, hs_codes=hs_codes)
+                merge_load_path = resolve_analysis_dataset(dataset_mode)
+                base_df = load_storage_dataset(merge_load_path, hs_codes=hs_codes)
 
                 if base_df is None or base_df.empty or not has_ml_target_columns(base_df):
 
@@ -381,7 +364,7 @@ def apply_data_source_selection(dataset_mode: str, hs_codes: list[str] | None = 
                 )
 
             merged_df = prepare_dataframe_for_analysis(
-                merged_storage, hs_codes=hs_codes, path=load_path
+                merged_storage, hs_codes=hs_codes, path=merge_load_path
             )
             set_dataframe(merged_df, dataset_label)
 
@@ -412,7 +395,18 @@ def apply_data_source_selection(dataset_mode: str, hs_codes: list[str] | None = 
 
 
 
-    if current_df is not None and current_source == dataset_label:
+    if (
+        current_df is not None
+        and current_source == dataset_label
+        and source_mode == "Use default file"
+    ):
+        return
+
+    if (
+        current_df is not None
+        and current_source == dataset_label
+        and source_mode != "Use default file"
+    ):
         refreshed = prepare_dataframe_for_analysis(
             current_df, hs_codes=hs_codes, path=load_path
         )

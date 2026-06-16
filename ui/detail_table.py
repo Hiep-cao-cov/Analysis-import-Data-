@@ -102,6 +102,9 @@ def prepare_shipment_detail_table(filtered: pd.DataFrame) -> pd.DataFrame:
     table = filtered[show_cols].copy()
     if "date" in table.columns:
         table["date"] = pd.to_datetime(table["date"], errors="coerce").dt.strftime("%Y-%m-%d")
+    if "year" in table.columns:
+        year_num = pd.to_numeric(table["year"], errors="coerce")
+        table["year"] = year_num.apply(lambda v: "" if pd.isna(v) else str(int(v)))
     if "volume_ton" in table.columns:
         table["volume_ton"] = pd.to_numeric(table["volume_ton"], errors="coerce").round(3)
     if "unit_price" in table.columns:
