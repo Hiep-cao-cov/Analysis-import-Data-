@@ -9,7 +9,7 @@ import pandas as pd
 from config.settings import COL_BRAND_NAME, COL_SUPPLIER, COL_TYPE
 from services.upload_dataset_validation import validate_upload_dataset_match
 from services.upload_ingest_service import classify_upload_format
-from services.data_paths import resolve_analysis_dataset
+from services.data_paths import default_dashboard_dataset_path
 from services.ml_columns import has_ml_target_columns, missing_ml_target_names
 
 
@@ -127,6 +127,42 @@ def _sample_preview_df(df: pd.DataFrame, limit: int = 5) -> pd.DataFrame:
     return df[cols].head(limit).copy()
 
 
+def _year_month_keys(df: pd.DataFrame) -> set[str]:
+    if df is None or df.empty:
+        return set()
+    if "date" in df.columns:
+        dates = pd.to_datetime(df["date"], errors="coerce")
+        return set(dates.dt.strftime("%Y-%m").dropna().tolist())
+    if "year" in df.columns and "month" in df.columns:
+        years = pd.to_numeric(df["year"], errors="coerce")
+        months = df["month"].astype(str).str.strip().str.lower().str[:3]
+        month_num = months.map(
+            {
+                "jan": 1,
+                "feb": 2,
+                "mar": 3,
+                "apr": 4,
+                "may": 5,
+                "jun": 6,
+                "jul": 7,
+                "aug": 8,
+                "sep": 9,
+                "oct": 10,
+                "nov": 11,
+                "dec": 12,
+            }
+        )
+        keys = pd.Series(index=df.index, dtype="object")
+        valid = years.notna() & month_num.notna()
+        keys.loc[valid] = (
+            years.loc[valid].astype(int).astype(str)
+            + "-"
+            + month_num.loc[valid].astype(int).astype(str).str.zfill(2)
+        )
+        return set(keys.dropna().tolist())
+    return set()
+
+
 def build_upload_preview(
     *,
     file_name: str,
@@ -186,7 +222,7 @@ def build_upload_preview(
         result.ml_ready = has_ml_target_columns(incoming_df)
         result.warnings = _optional_column_warnings(incoming_df)
 
-        load_path = resolve_analysis_dataset(dataset_mode)
+        load_path = default_dashboard_dataset_path(dataset_mode)
         base_df = load_default_data_fn(load_path, hs_codes=hs_codes)
         if base_df is not None and not base_df.empty:
             result.base_row_count = len(base_df)
@@ -195,6 +231,16 @@ def build_upload_preview(
             base_df = pd.DataFrame()
 
         if result.ml_ready and not base_df.empty:
+            overlap = sorted(_year_month_keys(base_df).intersection(_year_month_keys(incoming_df)))
+            if overlap:
+                shown = ", ".join(overlap[:6])
+                more = f" (+{len(overlap) - 6} more)" if len(overlap) > 6 else ""
+                result.error = (
+                    "Upload month already exists in default dataset: "
+                    f"{shown}{more}. Only new months can be merged."
+                )
+                result.ready_for_merge = False
+                return result
             _, new_rows, dup_rows = append_only_new_rows_fn(base_df, incoming_df)
             result.new_rows = new_rows
             result.duplicate_rows = dup_rows

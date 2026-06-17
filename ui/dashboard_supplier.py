@@ -312,12 +312,11 @@ def _render_view_mode_controls(
             if len(defaults) >= 2:
                 break
         compare_suppliers = st.multiselect(
-            "Suppliers to compare (2–5)",
+            "Suppliers to compare",
             suppliers,
             default=defaults[: min(2, len(defaults))],
             key="sup_compare_suppliers",
         )
-        compare_suppliers = compare_suppliers[:5]
         if len(compare_suppliers) < 2:
             st.info("Select at least **2 suppliers** to compare volume and market share.")
     return view_mode, compare_suppliers

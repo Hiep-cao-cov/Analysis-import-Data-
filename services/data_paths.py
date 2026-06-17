@@ -52,23 +52,14 @@ def is_seed_dataset_path(path: Path) -> bool:
     )
 
 
-def user_dataset_path(mode: str) -> Path:
-    """User working dataset path under data/ (updated on merge / upload)."""
-    key = normalize_dataset_mode(mode)
-    return DATA_DIR / DEFAULT_DATASET_FILENAMES[key]
-
-
 def resolve_analysis_dataset(mode: str) -> Path:
-    """Merge / upload working copy: data/ if present, else app_data seed."""
-    user = user_dataset_path(mode)
-    if user.is_file():
-        return user
+    """Dataset used for analysis/merge base (always app_data seed)."""
     return seed_dataset_path(mode)
 
 
 def analysis_dataset_save_path(mode: str) -> Path:
-    """Where Import Analytics merge always writes."""
-    return user_dataset_path(mode)
+    """Where Import Analytics merge writes (same default seed file)."""
+    return seed_dataset_path(mode)
 
 
 def temp_file_path(prefix: str, filename: str) -> Path:

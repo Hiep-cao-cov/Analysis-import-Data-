@@ -139,73 +139,54 @@ def set_dataframe(df: pd.DataFrame, source_name: str) -> None:
 
 
 
-def _merge_key_columns(df: pd.DataFrame) -> list[str]:
-    """Shipment identity columns for upload merge only (not used on default file load)."""
-    key_priority = [
-        "date",
-        "hs_code",
-        "customer_id",
-        "customer_name",
-        COL_SUPPLIER,
-        COL_TYPE,
-        COL_BRAND_NAME,
-        "volume",
-        "total_usd",
-    ]
-    return [c for c in key_priority if c in df.columns]
+def _year_month_keys(df: pd.DataFrame) -> set[str]:
+    if df.empty:
+        return set()
+    if "date" in df.columns:
+        dates = pd.to_datetime(df["date"], errors="coerce")
+        return set(dates.dt.strftime("%Y-%m").dropna().tolist())
+    if "year" in df.columns and "month" in df.columns:
+        years = pd.to_numeric(df["year"], errors="coerce")
+        months = df["month"].astype(str).str.strip().str.lower().str[:3]
+        month_num = months.map(
+            {
+                "jan": 1,
+                "feb": 2,
+                "mar": 3,
+                "apr": 4,
+                "may": 5,
+                "jun": 6,
+                "jul": 7,
+                "aug": 8,
+                "sep": 9,
+                "oct": 10,
+                "nov": 11,
+                "dec": 12,
+            }
+        )
+        keys = pd.Series(index=df.index, dtype="object")
+        valid = years.notna() & month_num.notna()
+        keys.loc[valid] = (
+            years.loc[valid].astype(int).astype(str)
+            + "-"
+            + month_num.loc[valid].astype(int).astype(str).str.zfill(2)
+        )
+        return set(keys.dropna().tolist())
+    return set()
 
 
-def build_row_signature(df: pd.DataFrame, key_cols: list[str]) -> pd.Series:
-
-    norm = pd.DataFrame(index=df.index)
-
-    for c in key_cols:
-
-        s = df[c] if c in df.columns else pd.Series("", index=df.index)
-
-        if c == "date":
-
-            s = pd.to_datetime(s, errors="coerce").dt.strftime("%Y-%m-%d")
-
-        elif c in {"volume_ton", "volume", "total_usd", "unit_price"}:
-
-            s = pd.to_numeric(s, errors="coerce").round(6)
-
-        norm[c] = s.fillna("").astype(str).str.strip().str.lower()
-
-    return pd.util.hash_pandas_object(norm, index=False).astype(str)
+def overlapping_month_keys(base_df: pd.DataFrame, incoming_df: pd.DataFrame) -> list[str]:
+    overlap = _year_month_keys(base_df).intersection(_year_month_keys(incoming_df))
+    return sorted(overlap)
 
 
 def append_only_new_rows(base_df: pd.DataFrame, incoming_df: pd.DataFrame) -> tuple[pd.DataFrame, int, int]:
-
-    key_cols = _merge_key_columns(base_df)
-    key_cols = [c for c in key_cols if c in incoming_df.columns]
-
-    if not key_cols:
-
-        key_cols = sorted(set(base_df.columns).intersection(incoming_df.columns))
-
-    if not key_cols:
-
-        merged = pd.concat([base_df, incoming_df], ignore_index=True, sort=False)
-
-        return merged, len(incoming_df), 0
-
-
-
-    base_sig = build_row_signature(base_df, key_cols)
-
-    incoming_sig = build_row_signature(incoming_df, key_cols)
-
-    is_new_mask = ~incoming_sig.isin(set(base_sig))
-
-    new_rows = incoming_df[is_new_mask].copy()
-
-    dup_count = int((~is_new_mask).sum())
-
-    merged = pd.concat([base_df, new_rows], ignore_index=True, sort=False)
-
-    return merged, int(len(new_rows)), dup_count
+    """Month-based append: reject merge when incoming month already exists."""
+    overlap = overlapping_month_keys(base_df, incoming_df)
+    if overlap:
+        return base_df.copy(), 0, len(incoming_df)
+    merged = pd.concat([base_df, incoming_df], ignore_index=True, sort=False)
+    return merged, len(incoming_df), 0
 
 
 
@@ -348,12 +329,23 @@ def apply_data_source_selection(dataset_mode: str, hs_codes: list[str] | None = 
 
             with st.spinner("Merging with current dataset..."):
 
-                merge_load_path = resolve_analysis_dataset(dataset_mode)
+                merge_load_path = default_dashboard_dataset_path(dataset_mode)
                 base_df = load_storage_dataset(merge_load_path, hs_codes=hs_codes)
 
                 if base_df is None or base_df.empty or not has_ml_target_columns(base_df):
 
                     base_df = pd.DataFrame()
+
+                overlap_months = overlapping_month_keys(base_df, incoming_df)
+                if overlap_months:
+                    months_preview = ", ".join(overlap_months[:6])
+                    if len(overlap_months) > 6:
+                        months_preview += f" (+{len(overlap_months) - 6} more)"
+                    st.warning(
+                        "Update blocked: uploaded file contains month(s) already present in default data "
+                        f"({months_preview}). Please upload a new month only."
+                    )
+                    return
 
                 merged_storage, added_rows, duplicate_rows = append_only_new_rows(base_df, incoming_df)
 

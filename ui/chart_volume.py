@@ -854,7 +854,7 @@ def render_supplier_compare_volume_chart(
     period_caption: str,
     empty_message: str = "No volume data for the selected suppliers.",
 ) -> None:
-    """Grouped bars: volume (ton) per supplier across periods."""
+    """Stacked bars: volume (ton) per supplier across periods."""
     import plotly.graph_objects as go
 
     title = _format_compare_volume_chart_title(
@@ -871,6 +871,7 @@ def render_supplier_compare_volume_chart(
 
     fig = go.Figure()
     compare_bar_colors = build_supplier_compare_color_map(suppliers)
+    bar_width = 0.72
     for i, sup in enumerate(suppliers):
         display_name = format_supplier_display_name(sup)
         vols = _supplier_series_by_period(
@@ -882,31 +883,72 @@ def render_supplier_compare_volume_chart(
                 y=vols,
                 name=display_name,
                 marker_color=_supplier_color(compare_bar_colors, sup),
+                width=bar_width,
                 hovertemplate="%{x}<br>%{fullData.name}: %{y:,.1f} ton<extra></extra>",
             )
         )
 
+    market_tons = []
+    for period in period_keys:
+        period_market = metrics_df.loc[
+            metrics_df["period"].astype(str) == str(period), "market_ton"
+        ]
+        market_tons.append(float(period_market.max()) if not period_market.empty else 0.0)
+    fig.add_trace(
+        go.Bar(
+            x=period_labels,
+            y=market_tons,
+            base=[0.0] * len(market_tons),
+            name="Total market volume",
+            marker_color="rgba(0,0,0,0)",
+            marker_line_color="#E5E7EB",
+            marker_line_width=1.6,
+            width=bar_width,
+            showlegend=True,
+            hovertemplate="%{x}<br>Total market: %{y:,.1f} ton<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=period_labels,
+            y=market_tons,
+            mode="text",
+            text=[f"<b>{v:,.1f} ton</b>" for v in market_tons],
+            textposition="top center",
+            textfont=dict(size=17, color="#E5E7EB"),
+            name="Total market label",
+            showlegend=False,
+            hoverinfo="skip",
+        )
+    )
+
     fig.update_layout(
-        barmode="group",
-        bargap=0.18,
-        bargroupgap=0.08,
+        barmode="stack",
+        bargap=0.15,
         height=420,
-        margin=dict(l=20, r=20, t=12, b=20),
+        margin=dict(l=20, r=210, t=12, b=20),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#E5E7EB"),
+        font=dict(color="#E5E7EB", size=14),
         template="plotly_dark",
         hovermode="x unified",
+        hoverlabel=dict(font_size=14),
         legend=dict(
-            orientation="h",
+            orientation="v",
             yanchor="top",
-            y=-0.18,
-            xanchor="center",
-            x=0.5,
-            font=dict(size=11, color="#E5E7EB"),
+            y=1.0,
+            xanchor="left",
+            x=1.02,
+            traceorder="reversed",
+            font=dict(size=13, color="#E5E7EB"),
         ),
-        xaxis=dict(title="", showgrid=False),
-        yaxis=dict(title="Volume (ton)", gridcolor="#374151", tickformat=","),
+        xaxis=dict(title="", showgrid=False, tickfont=dict(size=14)),
+        yaxis=dict(
+            title=dict(text="Volume (ton)", font=dict(size=14, color="#E5E7EB")),
+            gridcolor="#374151",
+            tickformat=",",
+            tickfont=dict(size=14),
+        ),
     )
     st.plotly_chart(fig, use_container_width=True, key="sup_compare_volume_chart")
 
@@ -968,29 +1010,238 @@ def render_supplier_compare_share_chart(
     )
     fig.update_layout(
         height=380,
-        margin=dict(l=20, r=20, t=12, b=20),
+        margin=dict(l=20, r=210, t=12, b=20),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#E5E7EB"),
+        font=dict(color="#E5E7EB", size=14),
         template="plotly_dark",
         hovermode="x unified",
+        hoverlabel=dict(font_size=14),
         legend=dict(
-            orientation="h",
+            orientation="v",
             yanchor="top",
-            y=-0.2,
-            xanchor="center",
-            x=0.5,
-            font=dict(size=11, color="#E5E7EB"),
+            y=1.0,
+            xanchor="left",
+            x=1.02,
+            traceorder="reversed",
+            font=dict(size=13, color="#E5E7EB"),
         ),
-        xaxis=dict(title="", showgrid=False),
+        xaxis=dict(title="", showgrid=False, tickfont=dict(size=14)),
         yaxis=dict(
-            title="Market share (%)",
+            title=dict(text="Market share (%)", font=dict(size=14, color="#E5E7EB")),
             gridcolor="#374151",
             ticksuffix="%",
+            tickfont=dict(size=14),
             range=[0, max(y_max * 1.2, 10.0)],
         ),
     )
     st.plotly_chart(fig, use_container_width=True, key="sup_compare_share_chart")
+
+
+def _volume_growth_pct(current: float, previous: float) -> float | None:
+    if previous <= 0:
+        return None
+    return (current - previous) / previous * 100.0
+
+
+def build_supplier_growth_vs_market_data(
+    metrics_df: pd.DataFrame,
+    *,
+    suppliers: list[str],
+    period_keys: list[str],
+) -> pd.DataFrame:
+    """
+    Period-over-period volume growth vs market benchmark.
+    relative_growth_pct = supplier_growth_pct - market_growth_pct (0 = matched market).
+    First period in the series has no prior period and is omitted.
+    """
+    empty = pd.DataFrame(
+        columns=[
+            "period",
+            "supplier",
+            "market_growth_pct",
+            "supplier_growth_pct",
+            "relative_growth_pct",
+        ]
+    )
+    if metrics_df.empty or len(period_keys) < 2 or not suppliers:
+        return empty
+
+    rows: list[dict] = []
+    for i in range(1, len(period_keys)):
+        period = str(period_keys[i])
+        prev_period = str(period_keys[i - 1])
+        cur_market_rows = metrics_df[metrics_df["period"].astype(str) == period]
+        prev_market_rows = metrics_df[metrics_df["period"].astype(str) == prev_period]
+        if cur_market_rows.empty or prev_market_rows.empty:
+            continue
+
+        cur_market = float(cur_market_rows["market_ton"].max())
+        prev_market = float(prev_market_rows["market_ton"].max())
+        market_growth = _volume_growth_pct(cur_market, prev_market)
+        if market_growth is None:
+            continue
+
+        for sup in suppliers:
+            sub = metrics_df[metrics_df["supplier"] == sup]
+            cur_vol = float(
+                sub.loc[sub["period"].astype(str) == period, "volume_ton"].sum()
+            )
+            prev_vol = float(
+                sub.loc[sub["period"].astype(str) == prev_period, "volume_ton"].sum()
+            )
+            supplier_growth = _volume_growth_pct(cur_vol, prev_vol)
+            if supplier_growth is None:
+                continue
+            rows.append(
+                {
+                    "period": period,
+                    "supplier": sup,
+                    "market_growth_pct": round(market_growth, 1),
+                    "supplier_growth_pct": round(supplier_growth, 1),
+                    "relative_growth_pct": round(supplier_growth - market_growth, 1),
+                }
+            )
+
+    if not rows:
+        return empty
+    return pd.DataFrame(rows)
+
+
+def _format_compare_growth_chart_title(
+    *,
+    material_type: str,
+    sale_channel: str,
+    period_mode: str,
+    year_int: int,
+    period_caption: str,
+) -> str:
+    mt_label = str(material_type).strip()
+    channel = str(sale_channel).strip()
+    if period_mode == "Yearly":
+        return f"Supplier growth vs market · {mt_label} · {period_caption}"
+    if period_mode == "Quarterly":
+        return f"Supplier Growth vs Market: {mt_label} · {channel} (Quarterly {year_int})"
+    if period_mode == "Monthly":
+        return f"Supplier Growth vs Market: {mt_label} · {channel} (Monthly {year_int})"
+    return f"Supplier growth vs market · {mt_label} · {period_caption}"
+
+
+def render_supplier_compare_growth_chart(
+    growth_df: pd.DataFrame,
+    *,
+    suppliers: list[str],
+    growth_period_labels: list[str],
+    growth_period_keys: list[str],
+    material_type: str,
+    period_mode: str,
+    year_int: int,
+    sale_channel: str,
+    period_caption: str,
+    empty_message: str = "Not enough periods to calculate growth vs market.",
+) -> None:
+    """Grouped diverging bars: supplier volume growth minus market growth (0 = market)."""
+    import plotly.graph_objects as go
+
+    title = _format_compare_growth_chart_title(
+        material_type=material_type,
+        sale_channel=sale_channel,
+        period_mode=period_mode,
+        year_int=year_int,
+        period_caption=period_caption,
+    )
+    chart_card_title(title, large=True)
+    if growth_df.empty or not growth_period_labels:
+        st.info(empty_message)
+        return
+
+    fig = go.Figure()
+    compare_colors = build_supplier_compare_color_map(suppliers)
+
+    for sup in suppliers:
+        display_name = format_supplier_display_name(sup)
+        sub = growth_df[growth_df["supplier"] == sup].set_index("period")
+        rel_vals: list[float | None] = []
+        custom: list[str] = []
+        for period in growth_period_keys:
+            key = str(period)
+            if key not in sub.index:
+                rel_vals.append(None)
+                custom.append("")
+                continue
+            row = sub.loc[key]
+            rel = float(row["relative_growth_pct"])
+            mkt = float(row["market_growth_pct"])
+            sup_g = float(row["supplier_growth_pct"])
+            rel_vals.append(rel)
+            custom.append(
+                f"Market: {mkt:+.1f}%<br>Supplier: {sup_g:+.1f}%<br>vs market: {rel:+.1f}%"
+            )
+
+        fig.add_trace(
+            go.Bar(
+                x=growth_period_labels,
+                y=rel_vals,
+                name=display_name,
+                marker_color=_supplier_color(compare_colors, sup),
+                customdata=custom,
+                hovertemplate="%{x}<br>%{fullData.name}<br>%{customdata}<extra></extra>",
+            )
+        )
+
+    abs_vals = growth_df["relative_growth_pct"].abs()
+    y_cap = float(abs_vals.max()) if not abs_vals.empty else 10.0
+    y_cap = max(y_cap * 1.2, 10.0)
+
+    fig.add_hline(
+        y=0,
+        line_color="#9CA3AF",
+        line_width=1.6,
+        annotation_text="Market growth (0)",
+        annotation_position="right",
+        annotation_font=dict(size=12, color="#9CA3AF"),
+    )
+
+    fig.update_layout(
+        barmode="group",
+        bargap=0.15,
+        bargroupgap=0.08,
+        height=400,
+        margin=dict(l=20, r=210, t=12, b=20),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#E5E7EB", size=14),
+        template="plotly_dark",
+        hovermode="x unified",
+        hoverlabel=dict(font_size=14),
+        legend=dict(
+            orientation="v",
+            yanchor="top",
+            y=1.0,
+            xanchor="left",
+            x=1.02,
+            traceorder="reversed",
+            font=dict(size=13, color="#E5E7EB"),
+        ),
+        xaxis=dict(title="", showgrid=False, tickfont=dict(size=14)),
+        yaxis=dict(
+            title=dict(
+                text="Growth vs market (pp)",
+                font=dict(size=14, color="#E5E7EB"),
+            ),
+            gridcolor="#374151",
+            ticksuffix="%",
+            tickfont=dict(size=14),
+            zeroline=False,
+            range=[-y_cap, y_cap],
+        ),
+    )
+    st.plotly_chart(fig, use_container_width=True, key="sup_compare_growth_chart")
+    chart_footnote(
+        "Each bar = supplier volume growth minus market volume growth vs the **previous period** "
+        "(year, quarter, or month). **Above 0** = grew faster than market; **below 0** = slower. "
+        "First period in the series has no prior period and is not shown."
+    )
 
 
 def render_supplier_compare_dashboard(
@@ -1005,7 +1256,7 @@ def render_supplier_compare_dashboard(
     sale_channel: str,
     supplier_color_map: dict[str, str],
 ) -> None:
-    """Compare mode: grouped volume bars + share lines."""
+    """Compare mode: stacked volume bars + share lines + growth vs market."""
     if period_mode == "Yearly":
         period_col = "year"
         period_order = None
@@ -1055,6 +1306,25 @@ def render_supplier_compare_dashboard(
         period_keys=period_keys,
         material_type=material_type,
         color_map=supplier_color_map,
+        period_mode=period_mode,
+        year_int=year_int,
+        sale_channel=sale_channel,
+        period_caption=period_caption,
+    )
+
+    growth_df = build_supplier_growth_vs_market_data(
+        metrics_df,
+        suppliers=suppliers,
+        period_keys=period_keys,
+    )
+    growth_period_keys = period_keys[1:] if len(period_keys) > 1 else []
+    growth_period_labels = period_labels[1:] if len(period_labels) > 1 else []
+    render_supplier_compare_growth_chart(
+        growth_df,
+        suppliers=suppliers,
+        growth_period_labels=growth_period_labels,
+        growth_period_keys=growth_period_keys,
+        material_type=material_type,
         period_mode=period_mode,
         year_int=year_int,
         sale_channel=sale_channel,
