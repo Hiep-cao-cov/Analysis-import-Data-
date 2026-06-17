@@ -14,7 +14,7 @@ import streamlit as st
 
 
 
-from config.settings import COL_BRAND_NAME, COL_SUPPLIER, COL_TYPE
+from config.settings import COL_BRAND_NAME, COL_SUPPLIER, COL_TYPE, UPLOAD_SKIP_DESCRIPTION_BLACKLIST_DEFAULT
 from services.analysis_service import prepare_analysis_frame
 from services.data_loader_service import load_and_standardize, load_file
 from services.upload_ingest_service import ingest_upload_file, load_storage_dataset
@@ -309,7 +309,15 @@ def apply_data_source_selection(dataset_mode: str, hs_codes: list[str] | None = 
 
             with st.spinner("Processing uploaded file (full ETL)..."):
 
-                incoming_df = ingest_upload_file(temp, hs_codes=hs_codes)
+                apply_blacklist = not st.session_state.get(
+                    "dash_skip_description_blacklist",
+                    UPLOAD_SKIP_DESCRIPTION_BLACKLIST_DEFAULT,
+                )
+                incoming_df = ingest_upload_file(
+                    temp,
+                    hs_codes=hs_codes,
+                    apply_description_blacklist=apply_blacklist,
+                )
 
 
 

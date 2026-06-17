@@ -56,6 +56,7 @@ def ingest_upload_file(
     source: Path,
     *,
     hs_codes: list[str] | None = None,
+    apply_description_blacklist: bool = False,
 ) -> pd.DataFrame:
     """
     Process an uploaded file for merge:
@@ -70,7 +71,11 @@ def ingest_upload_file(
     codes = _resolve_hs_codes(path, hs_codes)
 
     if upload_requires_full_etl(header):
-        df = run_upload_etl(path, hs_codes=codes)
+        df = run_upload_etl(
+            path,
+            hs_codes=codes,
+            apply_description_blacklist=apply_description_blacklist,
+        )
     else:
         from services.data_loader_service import load_and_standardize
 

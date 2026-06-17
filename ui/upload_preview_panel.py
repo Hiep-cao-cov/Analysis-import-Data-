@@ -6,7 +6,7 @@ import io
 import pandas as pd
 import streamlit as st
 
-from config.settings import ANALYSIS_HS_CODE_OPTIONS, COL_BRAND_NAME, COL_SUPPLIER, COL_TYPE
+from config.settings import ANALYSIS_HS_CODE_OPTIONS, COL_BRAND_NAME, COL_SUPPLIER, COL_TYPE, UPLOAD_SKIP_DESCRIPTION_BLACKLIST_DEFAULT
 from services.upload_preview import UploadPreviewResult, build_upload_preview
 from ui.analysis_data import (
     append_only_new_rows,
@@ -22,6 +22,7 @@ from services.data_paths import temp_file_path
 _PREVIEW_CACHE_KEY = "dash_upload_preview_cache"
 _UPLOAD_PREVIEW_TOKEN_KEY = "dash_upload_preview_token"
 _UPLOAD_DATASET_MODE_KEY = "dash_upload_dataset_mode"
+_UPLOAD_FILE_TOKEN_KEY = "dash_upload_file_token"
 
 
 def _normalize_dataset_mode(mode: str) -> str:
@@ -33,12 +34,30 @@ def _upload_token(uploaded) -> str:
     return f"{uploaded.name}:{len(uploaded.getvalue())}"
 
 
+def reset_upload_skip_blacklist_default() -> None:
+    """Upload ETL default: skip blacklist (keep all rows)."""
+    st.session_state.dash_skip_description_blacklist = UPLOAD_SKIP_DESCRIPTION_BLACKLIST_DEFAULT
+
+
+def upload_skip_description_blacklist() -> bool:
+    return st.session_state.get(
+        "dash_skip_description_blacklist",
+        UPLOAD_SKIP_DESCRIPTION_BLACKLIST_DEFAULT,
+    )
+
+
+def _upload_apply_description_blacklist() -> bool:
+    """False when user chose to skip blacklist (default)."""
+    return not upload_skip_description_blacklist()
+
+
 def get_upload_preview(uploaded) -> UploadPreviewResult | None:
     if uploaded is None:
         return None
 
     mode = _normalize_dataset_mode(st.session_state.get("analysis_mode", "MDI"))
-    token = f"{_upload_token(uploaded)}|{mode}"
+    skip_blacklist = upload_skip_description_blacklist()
+    token = f"{_upload_token(uploaded)}|{mode}|skip_bl={skip_blacklist}"
     cached = st.session_state.get(_PREVIEW_CACHE_KEY)
     if isinstance(cached, dict) and cached.get("token") == token:
         data = cached["result"]
@@ -49,6 +68,7 @@ def get_upload_preview(uploaded) -> UploadPreviewResult | None:
     last_merge = st.session_state.get("dash_last_merge_token")
 
     temp = temp_file_path("preview", uploaded.name)
+    apply_blacklist = _upload_apply_description_blacklist()
     with st.spinner("Checking upload…"):
         result = build_upload_preview(
             file_name=uploaded.name,
@@ -57,9 +77,14 @@ def get_upload_preview(uploaded) -> UploadPreviewResult | None:
             dataset_mode=mode,
             hs_codes=hs_codes,
             last_merge_token=last_merge,
-            ingest_file_fn=ingest_upload_file,
+            ingest_file_fn=lambda path, hs_codes=None: ingest_upload_file(
+                path,
+                hs_codes=hs_codes,
+                apply_description_blacklist=apply_blacklist,
+            ),
             load_default_data_fn=load_storage_dataset,
             append_only_new_rows_fn=append_only_new_rows,
+            apply_description_blacklist=apply_blacklist,
         )
 
     st.session_state[_PREVIEW_CACHE_KEY] = {"token": token, "result": result}
@@ -80,7 +105,9 @@ def clear_sidebar_upload_state(*, reset_source_mode: bool = True) -> None:
     clear_upload_preview_cache()
     st.session_state.pop("dash_sidebar_upload", None)
     st.session_state.pop("dash_last_merge_token", None)
+    st.session_state.pop(_UPLOAD_FILE_TOKEN_KEY, None)
     st.session_state.dash_merge_requested = False
+    reset_upload_skip_blacklist_default()
     if reset_source_mode:
         st.session_state.dash_source_mode = "Use default file"
 
@@ -173,6 +200,10 @@ def render_upload_preview_panel(uploaded) -> bool:
         st.caption("Run the ML Predict app first, then upload the prediction CSV.")
 
     st.markdown(f"- **File type:** {preview.file_kind}")
+    if upload_skip_description_blacklist():
+        st.markdown("- **Description blacklist:** skipped (all rows kept)")
+    else:
+        st.markdown("- **Description blacklist:** applied (matching rows removed)")
     st.markdown(f"- **Rows in upload:** {preview.row_count:,}")
     if preview.upload_coverage:
         st.markdown(f"- **Upload period:** {preview.upload_coverage}")

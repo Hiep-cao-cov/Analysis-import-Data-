@@ -34,7 +34,11 @@ def _product_line_for_hs_codes(hs_codes: list[str] | None) -> str | None:
     return None
 
 
-def build_pipeline(*, hs_codes: list[str] | None = None) -> OrderDataPipeline:
+def build_pipeline(
+    *,
+    hs_codes: list[str] | None = None,
+    apply_description_blacklist: bool = True,
+) -> OrderDataPipeline:
     product_line = _product_line_for_hs_codes(hs_codes)
     blacklist_terms = get_description_blacklist_terms(product_line=product_line)
     return OrderDataPipeline(
@@ -44,6 +48,7 @@ def build_pipeline(*, hs_codes: list[str] | None = None) -> OrderDataPipeline:
         default_decimals=3,
         blacklist_terms=blacklist_terms,
         product_line=product_line,
+        apply_description_blacklist=apply_description_blacklist,
     )
 
 
@@ -54,13 +59,17 @@ def run_etl(
     unit_filter: str = "kg",
     save_path: str | Path | None = None,
     rows_to_drop: str | None = None,
+    apply_description_blacklist: bool = True,
 ) -> pd.DataFrame:
     """
     Full ETL: load raw file → pipeline → HS filter → rename → optional unit filter.
     """
     _ = rows_to_drop  # deprecated — blacklist terms are in config/settings.py
     hs_codes = MDI_HS_CODES if hs_codes is None else hs_codes
-    pipeline = build_pipeline(hs_codes=hs_codes)
+    pipeline = build_pipeline(
+        hs_codes=hs_codes,
+        apply_description_blacklist=apply_description_blacklist,
+    )
     df = pipeline.run(str(raw_path))
     if hs_codes:
         df = filter_by_hs_code(df, hs_codes)

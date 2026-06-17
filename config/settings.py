@@ -38,6 +38,10 @@ TDI_HS_CODES = [
 # ── Row delete / filter rules (central config) ───────────────────────────────
 # Used by ETL, Predict, and Analysis ingest. Edit rules here only.
 #
+# Upload Full ETL default: skip description blacklist (keep all rows).
+# Uncheck sidebar checkbox to apply DESCRIPTION_BLACKLIST_TERMS below.
+UPLOAD_SKIP_DESCRIPTION_BLACKLIST_DEFAULT = True
+#
 # Rule types:
 #   1. description_blacklist — delete/mark row when description matches a term below
 #   2. hs_code_filter       — keep only MDI_HS_CODES or TDI_HS_CODES (by product line)

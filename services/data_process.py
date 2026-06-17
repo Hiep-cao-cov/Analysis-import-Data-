@@ -41,6 +41,7 @@ class OrderDataPipeline:
         *,
         blacklist_terms: list[str] | None = None,
         product_line: str | None = None,
+        apply_description_blacklist: bool = True,
     ):
         self.cols_to_drop = [str(col).strip().lower() for col in cols_to_drop] if cols_to_drop is not None else ['cang xuat nhap', 
                                                                                                                  'phuong tien van tai', 'cang nuoc ngoai']
@@ -54,6 +55,7 @@ class OrderDataPipeline:
         self.default_decimals = default_decimals
         self.rows_to_drop = rows_to_drop
         self._product_line = product_line
+        self._apply_description_blacklist = apply_description_blacklist
         self._blacklist_terms = self._load_blacklist_terms(blacklist_terms)
 
     def extend_blacklist(self, extra_terms: list[str]) -> None:
@@ -251,7 +253,8 @@ class OrderDataPipeline:
         df = self.clean_numeric_and_tax(df)
         df = self.process_dates(df)
         df = self.handle_missing_values(df)
-        df = self.filter_by_description_blacklist(df)  # ← THIS LINE - is it there?
+        if self._apply_description_blacklist:
+            df = self.filter_by_description_blacklist(df)
         df = self.standardize_units(df)
         df = self.standardize_prices_to_usd(df) # Creates the new column here
         

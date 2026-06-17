@@ -16,6 +16,7 @@ from config.settings import (
     DEFAULT_DATASETS_DIR,
     PROJECT_ROOT,
     TEMP_DIR,
+    UPLOAD_SKIP_DESCRIPTION_BLACKLIST_DEFAULT,
 )
 from services.data_paths import clear_temp_dir_on_startup, migrate_storage_layout
 from ui.analysis import render_analysis_page
@@ -45,6 +46,7 @@ def init_session_state() -> None:
         "show_detail_data": False,
         "dash_last_merge_token": None,
         "dash_merge_requested": False,
+        "dash_skip_description_blacklist": UPLOAD_SKIP_DESCRIPTION_BLACKLIST_DEFAULT,
         "analysis_subtab": "market",
     }
     for k, v in defaults.items():

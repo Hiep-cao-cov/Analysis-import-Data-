@@ -8,7 +8,7 @@ import streamlit as st
 
 
 
-from config.settings import ANALYSIS_DATASET_OPTIONS, SALE_CHANNEL_FILTER_OPTIONS, TYPE_SALE_FILTER_OPTIONS
+from config.settings import ANALYSIS_DATASET_OPTIONS, SALE_CHANNEL_FILTER_OPTIONS, TYPE_SALE_FILTER_OPTIONS, UPLOAD_SKIP_DESCRIPTION_BLACKLIST_DEFAULT
 from services.analysis_service import filter_options
 from services.customer_filter_service import (
     customer_id_to_name,
@@ -523,9 +523,11 @@ def render_shared_data_sidebar() -> None:
 
         st.session_state.dash_merge_requested = False
 
-        from ui.upload_preview_panel import clear_upload_preview_cache
+        from ui.upload_preview_panel import clear_upload_preview_cache, reset_upload_skip_blacklist_default
 
         clear_upload_preview_cache()
+        if source_mode == "Upload new file":
+            reset_upload_skip_blacklist_default()
 
         _reset_analysis_filters_for_dataset_change()
 
@@ -543,7 +545,28 @@ def render_shared_data_sidebar() -> None:
 
         )
 
-        from ui.upload_preview_panel import render_upload_preview_panel
+        from ui.upload_preview_panel import (
+            render_upload_preview_panel,
+            reset_upload_skip_blacklist_default,
+        )
+
+        if uploaded is not None:
+            file_token = f"{uploaded.name}:{len(uploaded.getvalue())}"
+            if st.session_state.get("dash_upload_file_token") != file_token:
+                st.session_state.dash_upload_file_token = file_token
+                reset_upload_skip_blacklist_default()
+        else:
+            st.session_state.pop("dash_upload_file_token", None)
+
+        st.checkbox(
+            "Skip description blacklist (keep all rows)",
+            value=UPLOAD_SKIP_DESCRIPTION_BLACKLIST_DEFAULT,
+            key="dash_skip_description_blacklist",
+            help=(
+                "Checked by default — Full ETL keeps every row. Uncheck to remove rows "
+                "matching DESCRIPTION_BLACKLIST_TERMS in config/settings.py."
+            ),
+        )
 
         merge_ready = render_upload_preview_panel(uploaded)
 

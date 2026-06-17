@@ -50,6 +50,7 @@ def run_upload_etl(
     *,
     hs_codes: list[str] | None = None,
     unit_filter: str = "kg",
+    apply_description_blacklist: bool = False,
 ) -> pd.DataFrame:
     """Full ETL pipeline for uploads — same steps as run_etl, explicit entry point."""
     codes = hs_codes if hs_codes else infer_hs_codes_for_path(source)
@@ -57,6 +58,7 @@ def run_upload_etl(
         source,
         hs_codes=codes,
         unit_filter=unit_filter or None,
+        apply_description_blacklist=apply_description_blacklist,
     )
 
 

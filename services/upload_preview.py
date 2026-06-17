@@ -33,6 +33,7 @@ class UploadPreviewResult:
     total_after_merge: int = 0
     already_merged: bool = False
     dataset_mismatch: bool = False
+    apply_description_blacklist: bool = False
     sample: pd.DataFrame | None = None
     processed_csv: bytes | None = None
     processed_download_name: str = ""
@@ -174,13 +175,18 @@ def build_upload_preview(
     ingest_file_fn,
     load_default_data_fn,
     append_only_new_rows_fn,
+    apply_description_blacklist: bool = False,
 ) -> UploadPreviewResult:
     """
     Parse upload, validate ML columns, and dry-run merge against saved dataset.
     Dependencies injected to avoid circular imports with ui.analysis_data.
     """
     upload_token = f"{file_name}:{len(file_bytes)}"
-    result = UploadPreviewResult(file_name=file_name, file_kind="—")
+    result = UploadPreviewResult(
+        file_name=file_name,
+        file_kind="—",
+        apply_description_blacklist=apply_description_blacklist,
+    )
 
     if last_merge_token and last_merge_token == upload_token:
         result.already_merged = True
