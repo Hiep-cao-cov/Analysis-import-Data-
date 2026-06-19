@@ -2700,17 +2700,19 @@ def render_supplier_top_salers_chart(
     sale_channel: str,
     year_int: int,
     top_n: int,
+    period_caption: str | None = None,
     side_panel: bool = False,
     chart_key: str = "sup_top_salers_chart",
-    empty_message: str = "No saler volume for this supplier and year.",
+    empty_message: str = "No saler volume for this supplier and period.",
 ) -> None:
-    """Top salers by volume for sidebar year — same layout as Top customers."""
+    """Top salers by volume for the active supplier period scope."""
     import plotly.graph_objects as go
 
     from config.settings import SUPPLIER_TOP_CUSTOMERS_OTHERS_LABEL
 
     supplier_name = format_supplier_display_name(supplier)
     mt_label = str(material_type).strip()
+    period_label = period_caption or f"Year {year_int}"
     chart_df, n_salers = build_supplier_top_salers_data(
         df,
         top_n=top_n,
@@ -2718,17 +2720,17 @@ def render_supplier_top_salers_chart(
     )
 
     if side_panel:
-        chart_card_title(f"Top salers · Year {year_int}", large=True)
+        chart_card_title(f"Top salers · {period_label}", large=True)
         st.caption(
             f"{supplier_name} · {mt_label} · {sale_channel} · "
             f"{n_salers:,} salers · Top {top_n}"
         )
     else:
         chart_card_title(
-            f"Top salers · {supplier_name} · {mt_label} · {sale_channel} · Year {year_int}",
+            f"Top salers · {supplier_name} · {mt_label} · {sale_channel} · {period_label}",
             large=True,
         )
-        st.caption(f"{n_salers:,} salers in {year_int} · Top {top_n} shown")
+        st.caption(f"{n_salers:,} salers in {period_label} · Top {top_n} shown")
 
     if chart_df.empty:
         st.info(empty_message)
@@ -2985,7 +2987,7 @@ def render_supplier_period_customer_volume_chart(
     chart_key: str,
     empty_message: str = "No customer volume for this supplier and period.",
 ) -> None:
-    """Horizontal ranked bars: customer volume for selected quarter/month."""
+    """Horizontal ranked bars: customer volume for selected year / quarter / month."""
     from config.settings import SUPPLIER_TOP_CUSTOMERS_OTHERS_LABEL
 
     supplier_name = format_supplier_display_name(supplier)

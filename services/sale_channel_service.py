@@ -1,4 +1,4 @@
-"""Derive Sale_chanel from transport mode (phuong tien van tai)."""
+"""Derive Sale_chanel from transport mode and payment currency."""
 from __future__ import annotations
 
 import re
@@ -9,8 +9,10 @@ import pandas as pd
 from config.settings import (
     INDENT_TRANSPORT_LABELS,
     SALE_CHANNEL_COLUMN,
+    SALE_CHANNEL_CURRENCY_COLUMNS,
     SALE_CHANNEL_FILTER_OPTIONS,
     SALE_CHANNEL_INDENT_VALUE,
+    SALE_CHANNEL_LOCAL_CURRENCY_VALUES,
     SALE_CHANNEL_LOCAL_VALUE,
     SALE_CHANNEL_TRANSPORT_COLUMN,
 )
@@ -45,23 +47,50 @@ def find_transport_column(df: pd.DataFrame) -> str | None:
     return None
 
 
+def find_currency_column(df: pd.DataFrame) -> str | None:
+    for col in df.columns:
+        if str(col).strip().lower() in SALE_CHANNEL_CURRENCY_COLUMNS:
+            return col
+    return None
+
+
+def _vnd_currency_mask(df: pd.DataFrame, currency_col: str | None) -> pd.Series:
+    if currency_col is None:
+        return pd.Series(False, index=df.index)
+    normalized = (
+        df[currency_col]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.lower()
+    )
+    return normalized.isin(SALE_CHANNEL_LOCAL_CURRENCY_VALUES)
+
+
 def add_sale_channel_column(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Add Sale_chanel:
-    - Indent if phuong tien van tai matches INDENT_TRANSPORT_LABELS in settings.py
-    - Local otherwise (including missing transport)
+    Add Sale_chanel (single step — transport OR currency rule):
+
+    - Indent if phuong tien van tai matches INDENT_TRANSPORT_LABELS
+      AND currency is not VND
+    - Local if transport does not match indent labels OR currency is VND
     """
     out = df.copy()
     transport_col = find_transport_column(out)
+    currency_col = find_currency_column(out)
     indent_labels = _indent_transport_set()
+    vnd_mask = _vnd_currency_mask(out, currency_col)
 
     if transport_col is None:
         if SALE_CHANNEL_COLUMN not in out.columns:
             out[SALE_CHANNEL_COLUMN] = SALE_CHANNEL_LOCAL_VALUE
+        if vnd_mask.any():
+            out.loc[vnd_mask, SALE_CHANNEL_COLUMN] = SALE_CHANNEL_LOCAL_VALUE
         return out
 
     normalized = out[transport_col].map(_normalize_transport_label)
-    out[SALE_CHANNEL_COLUMN] = normalized.isin(indent_labels).map(
+    indent_mask = normalized.isin(indent_labels) & ~vnd_mask
+    out[SALE_CHANNEL_COLUMN] = indent_mask.map(
         {True: SALE_CHANNEL_INDENT_VALUE, False: SALE_CHANNEL_LOCAL_VALUE}
     )
     return out

@@ -109,10 +109,47 @@ def _supplier_period_scope(
     return scoped.copy()
 
 
+def _compare_suppliers_period_scope(
+    df_channel: pd.DataFrame,
+    *,
+    suppliers: list[str],
+    supplier_col: str,
+    material_type: str,
+    type_col: str,
+    period_mode: str,
+    year_int: int,
+) -> pd.DataFrame:
+    """Rows for compared suppliers across full compare period (all years / quarters / months)."""
+    supplier_set = {str(s).strip() for s in suppliers}
+    scoped = df_channel[
+        df_channel[supplier_col].astype(str).str.strip().isin(supplier_set)
+    ]
+    scoped = filter_by_material_type(scoped, material_type, type_col=type_col)
+    if period_mode != "Yearly" and "year" in scoped.columns:
+        scoped = scoped[pd.to_numeric(scoped["year"], errors="coerce") == year_int]
+    return scoped.copy()
+
+
+def _compare_period_detail_label(
+    period_mode: str,
+    year_int: int,
+    *,
+    scope: pd.DataFrame | None = None,
+) -> str:
+    if period_mode == "Yearly":
+        if scope is not None and not scope.empty:
+            return format_dataset_year_range(scope) or "All years"
+        return "All years"
+    if period_mode == "Quarterly":
+        return f"{year_int} · all quarters"
+    return f"{year_int} · all months"
+
+
 def _render_period_controls(
     *,
     year: str,
     year_supplier_scope: pd.DataFrame,
+    hide_sub_period: bool = False,
 ) -> tuple[str, str, str | None, str | None]:
     """Period + optional quarter/month sub-select. Returns (mode, label, quarter, month)."""
     st.markdown(
@@ -136,49 +173,54 @@ def _render_period_controls(
         )
     selected_quarter: str | None = None
     selected_month: str | None = None
-    if period_mode == "Quarterly":
-        available = _quarters_with_data(year_supplier_scope)
-        with col_sub:
-            if available:
-                current = st.session_state.get("sup_quarter_select")
-                if current not in available:
-                    st.session_state["sup_quarter_select"] = available[-1]
-                selected_quarter = st.selectbox(
-                    "Quarter",
-                    available,
-                    format_func=lambda q: str(q).upper(),
-                    key="sup_quarter_select",
-                )
-            else:
-                st.selectbox(
-                    "Quarter",
-                    ["—"],
-                    disabled=True,
-                    key="sup_quarter_select_empty",
-                )
-    elif period_mode == "Monthly":
-        available = _months_with_data(year_supplier_scope)
-        with col_sub:
-            if available:
-                current = st.session_state.get("sup_month_select")
-                if current not in available:
-                    st.session_state["sup_month_select"] = available[-1]
-                selected_month = st.selectbox(
-                    "Month",
-                    available,
-                    format_func=_month_display_label,
-                    key="sup_month_select",
-                )
-            else:
-                st.selectbox(
-                    "Month",
-                    ["—"],
-                    disabled=True,
-                    key="sup_month_select_empty",
-                )
-    return period_mode, _period_detail_label(
-        period_mode, year, int(year), selected_quarter, selected_month
-    ), selected_quarter, selected_month
+    if not hide_sub_period:
+        if period_mode == "Quarterly":
+            available = _quarters_with_data(year_supplier_scope)
+            with col_sub:
+                if available:
+                    current = st.session_state.get("sup_quarter_select")
+                    if current not in available:
+                        st.session_state["sup_quarter_select"] = available[-1]
+                    selected_quarter = st.selectbox(
+                        "Quarter",
+                        available,
+                        format_func=lambda q: str(q).upper(),
+                        key="sup_quarter_select",
+                    )
+                else:
+                    st.selectbox(
+                        "Quarter",
+                        ["—"],
+                        disabled=True,
+                        key="sup_quarter_select_empty",
+                    )
+        elif period_mode == "Monthly":
+            available = _months_with_data(year_supplier_scope)
+            with col_sub:
+                if available:
+                    current = st.session_state.get("sup_month_select")
+                    if current not in available:
+                        st.session_state["sup_month_select"] = available[-1]
+                    selected_month = st.selectbox(
+                        "Month",
+                        available,
+                        format_func=_month_display_label,
+                        key="sup_month_select",
+                    )
+                else:
+                    st.selectbox(
+                        "Month",
+                        ["—"],
+                        disabled=True,
+                        key="sup_month_select_empty",
+                    )
+    if hide_sub_period:
+        period_label = _compare_period_detail_label(period_mode, int(year))
+    else:
+        period_label = _period_detail_label(
+            period_mode, year, int(year), selected_quarter, selected_month
+        )
+    return period_mode, period_label, selected_quarter, selected_month
 
 
 def _period_detail_label(
@@ -439,12 +481,14 @@ def render_supplier_page(df: pd.DataFrame, dataset_label: str) -> None:
         year_int=year_int,
     )
 
+    view_mode, compare_suppliers = _render_view_mode_controls(suppliers, supplier)
+    compare_mode = view_mode == "Compare suppliers" and len(compare_suppliers) >= 2
+
     period_mode, period_label, selected_quarter, selected_month = _render_period_controls(
         year=year,
         year_supplier_scope=top_customers_scope,
+        hide_sub_period=view_mode == "Compare suppliers",
     )
-    view_mode, compare_suppliers = _render_view_mode_controls(suppliers, supplier)
-    compare_mode = view_mode == "Compare suppliers" and len(compare_suppliers) >= 2
     top_customers_n = _render_top_customers_n_control() if not compare_mode else SUPPLIER_TOP_CUSTOMER_OPTIONS[0]
 
     period_scope = _supplier_period_scope(
@@ -482,7 +526,7 @@ def render_supplier_page(df: pd.DataFrame, dataset_label: str) -> None:
         top_n=top_customers_n,
     )
     salers_chart_df, n_salers = build_supplier_top_salers_data(
-        top_customers_scope,
+        period_scope,
         top_n=top_customers_n,
     )
     total_ton = float(period_scope["volume_ton"].sum()) if not period_scope.empty else 0.0
@@ -534,7 +578,7 @@ def render_supplier_page(df: pd.DataFrame, dataset_label: str) -> None:
         with m4:
             kpi_card(
                 f"{n_salers:,}",
-                f"Salers in {year_int}",
+                "Salers in period",
                 "◆",
                 icon_class="blue",
             )
@@ -584,7 +628,18 @@ def render_supplier_page(df: pd.DataFrame, dataset_label: str) -> None:
         year_int=year_int,
         top_n=top_customers_n,
     )
-    top_salers_kwargs = dict(top_customers_kwargs)
+    top_salers_period_caption = (
+        f"Year {year_int}" if period_mode == "Yearly" else period_label
+    )
+    top_salers_kwargs = dict(
+        df=period_scope,
+        supplier=supplier,
+        material_type=material_type,
+        sale_channel=sale_channel,
+        year_int=year_int,
+        top_n=top_customers_n,
+        period_caption=top_salers_period_caption,
+    )
 
     if compare_mode:
         render_supplier_compare_dashboard(
@@ -626,6 +681,17 @@ def render_supplier_page(df: pd.DataFrame, dataset_label: str) -> None:
                     x_title="Year",
                     empty_message="No repeat or new-to-supplier customer data for these filters.",
                     chart_key="sup_year_customer_new_current",
+                )
+                render_supplier_period_customer_volume_chart(
+                    period_scope,
+                    supplier=supplier,
+                    material_type=material_type,
+                    sale_channel=sale_channel,
+                    year_int=year_int,
+                    period_label="Year",
+                    top_n=top_customers_n,
+                    chart_key=f"sup_year_customer_volume_{year_int}",
+                    empty_message="No customer volume for this supplier and year.",
                 )
             elif period_mode == "Quarterly":
                 render_quarterly_supplier_market_volume_chart(
@@ -719,8 +785,31 @@ def render_supplier_page(df: pd.DataFrame, dataset_label: str) -> None:
             render_supplier_top_customers_chart(**top_customers_kwargs, side_panel=True)
             render_supplier_top_salers_chart(**top_salers_kwargs, side_panel=True)
 
-    if st.session_state.get("show_detail_data", False) and not compare_mode:
-        if period_scope.empty:
+    if st.session_state.get("show_detail_data", False):
+        if compare_mode:
+            detail_scope = _compare_suppliers_period_scope(
+                df_channel,
+                suppliers=compare_suppliers,
+                supplier_col=supplier_col,
+                material_type=material_type,
+                type_col=type_col,
+                period_mode=period_mode,
+                year_int=year_int,
+            )
+            supplier_label = ", ".join(
+                format_supplier_display_name(s) for s in compare_suppliers
+            )
+            detail_period_label = _compare_period_detail_label(
+                period_mode,
+                year_int,
+                scope=detail_scope,
+            )
+        else:
+            detail_scope = period_scope
+            supplier_label = supplier
+            detail_period_label = period_label
+
+        if detail_scope.empty:
             st.warning("No shipment rows for the current filters.")
         else:
             type_sale_label = (
@@ -729,13 +818,13 @@ def render_supplier_page(df: pd.DataFrame, dataset_label: str) -> None:
                 else f" · {str(type_sale).strip().upper()}"
             )
             render_styled_table(
-                prepare_shipment_detail_table(period_scope),
+                prepare_shipment_detail_table(detail_scope),
                 title="Shipment detail",
                 subtitle=(
-                    f"All import rows · {supplier} · {sale_channel}{type_sale_label}"
-                    f" · {period_label} · {material_type}"
+                    f"All import rows · {supplier_label} · {sale_channel}{type_sale_label}"
+                    f" · {detail_period_label} · {material_type}"
                 ),
                 export_filename="supplier_shipment_detail.csv",
             )
-    else:
+    elif not compare_mode:
         st.info("Shipment detail is hidden. Enable **Show detail data** in the left sidebar.")

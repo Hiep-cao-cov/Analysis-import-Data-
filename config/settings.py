@@ -287,12 +287,14 @@ COLUMN_RENAME_MAP = {
 }
 
 # ── Sale channel (Sale_chanel) ─────────────────────────────────────────────
-# Column "Phuong tien van tai" → Sale_chanel:
-#   match any value below → Indent; otherwise → Local
+# Indent when phuong tien van tai matches INDENT_TRANSPORT_LABELS below.
+# Local when transport does not match OR currency (ngoai te thanh toan / currency) is VND.
 SALE_CHANNEL_COLUMN = "Sale_chanel"
 SALE_CHANNEL_TRANSPORT_COLUMN = "phuong tien van tai"
+SALE_CHANNEL_CURRENCY_COLUMNS = ("currency", "ngoai te thanh toan")
 SALE_CHANNEL_INDENT_VALUE = "Indent"
 SALE_CHANNEL_LOCAL_VALUE = "Local"
+SALE_CHANNEL_LOCAL_CURRENCY_VALUES = frozenset({"vnd"})
 INDENT_TRANSPORT_LABELS = [
     "Đường biển",
     "Đường biển (container)",

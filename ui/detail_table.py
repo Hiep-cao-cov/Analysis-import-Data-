@@ -96,6 +96,23 @@ DETAIL_DISPLAY_NAMES = {
 }
 
 
+def _format_code_as_text(value) -> str:
+    """Format identifier codes (HS code, etc.) as plain text without float decimals."""
+    if pd.isna(value):
+        return ""
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "none"}:
+        return ""
+    num = pd.to_numeric(text, errors="coerce")
+    if pd.notna(num) and float(num).is_integer():
+        return str(int(num))
+    if "." in text:
+        whole, frac = text.split(".", 1)
+        if whole.isdigit() and frac.strip("0") == "":
+            return whole
+    return text
+
+
 def prepare_shipment_detail_table(filtered: pd.DataFrame) -> pd.DataFrame:
     excluded_cols = {"supplier_raw", "supplier_group", "type_clean", "total_usd"}
     show_cols = [c for c in TABLE_COLUMNS if c in filtered.columns and c not in excluded_cols]
@@ -105,6 +122,8 @@ def prepare_shipment_detail_table(filtered: pd.DataFrame) -> pd.DataFrame:
     if "year" in table.columns:
         year_num = pd.to_numeric(table["year"], errors="coerce")
         table["year"] = year_num.apply(lambda v: "" if pd.isna(v) else str(int(v)))
+    if "hs_code" in table.columns:
+        table["hs_code"] = table["hs_code"].apply(_format_code_as_text)
     if "volume_ton" in table.columns:
         table["volume_ton"] = pd.to_numeric(table["volume_ton"], errors="coerce").round(3)
     if "unit_price" in table.columns:
