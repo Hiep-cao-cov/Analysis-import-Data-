@@ -6,7 +6,6 @@ import streamlit as st
 from services.data_paths import default_dashboard_dataset_path, resolve_analysis_dataset
 from services.ml_columns import has_ml_target_columns
 from ui.analysis_data import (
-    apply_data_source_selection,
     get_dataframe,
     render_ml_columns_required_message,
 )
@@ -32,6 +31,15 @@ def render_upload_pending_message() -> None:
         if preview is not None and preview.dataset_mismatch:
             st.warning(preview.error or "This upload does not match the selected dataset.")
             return
+        if preview is not None and preview.error:
+            st.error(preview.error)
+            return
+        if preview is not None and preview.ml_ready and preview.merge_block_reason:
+            st.info(
+                f"Upload is valid ({preview.row_count:,} rows with **BRAND NAME**, **SUPPLIER**, **TYPE**). "
+                f"Dashboards show upload data only. Merge is blocked: {preview.merge_block_reason}"
+            )
+            return
         st.warning(
             "This upload is missing **BRAND NAME**, **SUPPLIER**, or **TYPE** "
             "(see sidebar preview). Run **Predict new** in the ML app, then upload the prediction CSV."
@@ -44,7 +52,7 @@ def render_analysis_page(
     dataset_label: str = "MDI",
     hs_codes: list[str] | None = None,
 ) -> None:
-    apply_data_source_selection(dataset_mode, hs_codes=hs_codes)
+    # Data load runs in app.main() via apply_data_source_selection (before sidebar widgets).
 
     source_mode = st.session_state.get("dash_source_mode", "Use default file")
     load_path = (

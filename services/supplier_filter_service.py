@@ -139,6 +139,18 @@ def suppliers_by_avg_market_share(
     return [name for name, _ in ranked]
 
 
+def _supplier_names_from_scope(
+    scoped: pd.DataFrame,
+    supplier_col: str,
+) -> list[str]:
+    if scoped.empty or supplier_col not in scoped.columns:
+        return []
+    return sorted(
+        {str(s).strip().upper() for s in scoped[supplier_col].dropna().unique() if str(s).strip()},
+        key=str,
+    )
+
+
 def resolve_supplier_filter_options(
     df: pd.DataFrame,
     *,
@@ -161,20 +173,33 @@ def resolve_supplier_filter_options(
             sale_channel=sale_channel,
             type_col=type_col,
         )
-        return _curated_names_with_data(scoped, curated, supplier_col)
+        names = _curated_names_with_data(scoped, curated, supplier_col)
+        if names:
+            return names
+        fallback = _supplier_names_from_scope(scoped, supplier_col)
+        return fallback if fallback else names
 
     dataset_key = str(dataset_label).strip().upper()
     if dataset_key == "PMDI":
         dataset_key = "MDI"
     material_key = str(material_type).strip().upper()
     if dataset_key == "MDI" and material_key != "PMDI":
-        return suppliers_by_avg_market_share(
+        names = suppliers_by_avg_market_share(
             df,
             material_type=material_type,
             sale_channel=sale_channel,
             type_col=type_col,
             supplier_col=supplier_col,
         )
+        if names:
+            return names
+        scoped = _scoped_material_frame(
+            df,
+            material_type=material_type,
+            sale_channel=sale_channel,
+            type_col=type_col,
+        )
+        return _supplier_names_from_scope(scoped, supplier_col)
 
     scoped = _scoped_material_frame(
         df,
@@ -184,11 +209,7 @@ def resolve_supplier_filter_options(
     )
     if scoped.empty or supplier_col not in scoped.columns:
         return []
-    names = sorted(
-        {str(s).strip().upper() for s in scoped[supplier_col].dropna().unique() if str(s).strip()},
-        key=str,
-    )
-    return names
+    return _supplier_names_from_scope(scoped, supplier_col)
 
 
 def apply_curated_supplier_grouping(

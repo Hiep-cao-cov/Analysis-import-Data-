@@ -120,6 +120,23 @@ def resolve_customer_filter_options(
     return result
 
 
+def default_customer_id(
+    df: pd.DataFrame,
+    *,
+    material_type: str,
+    sale_channel: str,
+    year: int | None = None,
+) -> str | None:
+    """First customer_id by volume in the active Tab 3 filter scope (must have data)."""
+    options = resolve_customer_filter_options(
+        df,
+        material_type=material_type,
+        sale_channel=sale_channel,
+        year=year,
+    )
+    return options[0][0] if options else None
+
+
 def customer_id_to_name(options: list[tuple[str, str]]) -> dict[str, str]:
     return {cid: name for cid, name in options}
 

@@ -89,6 +89,30 @@ def prepare_analysis_frame(df: pd.DataFrame) -> pd.DataFrame:
     if "year" not in out.columns and "date" in out.columns:
         out["year"] = out["date"].dt.year
 
+    if "date" in out.columns:
+        dates = out["date"]
+        if "month" in out.columns:
+            month_missing = (
+                out["month"].astype(str).str.strip().replace({"nan": "", "NaN": "", "None": ""}) == ""
+            )
+            if month_missing.any():
+                out.loc[month_missing, "month"] = (
+                    dates.loc[month_missing].dt.strftime("%b").str.lower()
+                )
+        else:
+            out["month"] = dates.dt.strftime("%b").str.lower()
+
+        if "quarter" in out.columns:
+            quarter_missing = (
+                out["quarter"].astype(str).str.strip().replace({"nan": "", "NaN": "", "None": ""}) == ""
+            )
+            if quarter_missing.any():
+                out.loc[quarter_missing, "quarter"] = (
+                    "q" + dates.loc[quarter_missing].dt.quarter.astype("Int64").astype(str)
+                )
+        else:
+            out["quarter"] = "q" + dates.dt.quarter.astype(str)
+
     if COL_SUPPLIER in out.columns:
         out["supplier_raw"] = out[COL_SUPPLIER].astype(str).str.strip()
         out.loc[out["supplier_raw"].isin(["", "nan", "NaN", "None"]), "supplier_raw"] = pd.NA

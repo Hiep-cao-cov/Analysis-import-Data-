@@ -35,152 +35,9 @@ TDI_HS_CODES = [
     "29291090",
 ]
 
-# ── Row delete / filter rules (central config) ───────────────────────────────
-# Used by ETL, Predict, and Analysis ingest. Edit rules here only.
-#
-# Upload Full ETL default: skip description blacklist (keep all rows).
-# Uncheck sidebar checkbox to apply DESCRIPTION_BLACKLIST_TERMS below.
-UPLOAD_SKIP_DESCRIPTION_BLACKLIST_DEFAULT = True
-#
-# Rule types:
-#   1. description_blacklist — delete/mark row when description matches a term below
-#   2. hs_code_filter       — keep only MDI_HS_CODES or TDI_HS_CODES (by product line)
-#   3. unit_filter          — keep ALLOWED_UNITS only; tấn → kg conversion in ETL
-#   4. missing_total_usd      — drop/mark rows with empty tri gia usd / total_usd
-#   5. unknown_brand         — after predict: mark when BRAND NAME = UNKNOW and TYPE is empty
-#
-# Blacklist matching:
-#   - Phrases (len > DESCRIPTION_BLACKLIST_SHORT_TERM_MAX_LEN): substring match
-#   - Short terms (len <= max len) OR FORCE_WORD_BOUNDARY set: whole-word match only
-#     (avoids false hits like "can" in CANGZHOU, "hạt" in "nhạt")
-#
-# Legacy CSV app_config/delete_description.csv is no longer loaded — edit lists below.
-
-DESCRIPTION_BLACKLIST_SHORT_TERM_MAX_LEN = 4
-
-# Always use whole-word match for these (even when longer than max len)
-DESCRIPTION_BLACKLIST_FORCE_WORD_BOUNDARY = frozenset({
-    "cast",
-    "polyol",
-})
-
-# Core blacklist — descriptions containing these products/chemicals are excluded
-DESCRIPTION_BLACKLIST_TERMS = [
-    # Packaging / form (use phrases — do NOT add bare "can" or "hạt")
-    "3kg/can",
-    "5kg/bình",
-    "9kg/thùng",
-    "10kg/drum,",
-    "20kg/drum,",
-    "kg/can",
-    "dạng hạt",
-    "hạt nhựa",
-    "Granules",
-    "Powder",
-    "powder",
-    # Polymers / coatings / non-target materials
-    "tpu",
-    "TPU",
-    "TPE",
-    "ETPU",
-    "(TPU)",
-    "Thermoplastic",
-    "thermoplastic",
-    "THERMOPLASTIC",
-    "nhiệt dẻo",
-    "dẻo",
-    "polyol",
-    "baydur",
-    "Desmopan",
-    "DESMOPAN",
-    "Vestagon",
-    "Vesmody",
-    "PROMUL",
-    "HIRESOL",
-    "AQUACE",
-    "LOCTITE",
-    "TAKENATE",
-    "TAKELAC",
-    "TOLONATE",
-    "DM-70A",
-    "42bd005",
-    " MR-3860",
-    "25Kg)",
-    "9007-34-5",
-    "51852-81-4",
-    "28476-49-5",
-    "24938-37-2",
-    "85940-94-9",
-    "26570-73-0",
-    "190976-43-3",
-    "28182-81-2",
-    "2634-33-5",
-    "141-78-6",
-    "123-86-4",
-    "107-21-1",
-    "1330-20-7",
-    # Paints / adhesives / leather / textiles
-    "EPOXY",
-    "acrylate",
-    "DISPERSION",
-    "spray coat",
-    "Water based",
-    "Water-based polyurethane",
-    "Water Decoloring Agent",
-    "WATER-BASE",
-    "WATER BASE",
-    "waterbase",
-    "MELAMINE",
-    "Formaldehyde",
-    "Decoloring agent",
-    "Polymethylolamine Dicyandiamide",
-    "formamine",
-    "dimethyl formamine",
-    "Ethyl acetate",
-    "Ethyl Acetate",
-    "Acetone",
-    "chống thấm",
-    "chống thấm polyurethane",
-    "chong tham",  # same rule when customs text drops Vietnamese accents
-    "da thuộc",
-    "da tổng hợp",
-    "da nhân tạo",
-    "GIẢ DA",
-    "thuộc da",
-    "phủ bảo vệ",
-    "nganh det",
-    "dán màng",
-    "mực",
-    "bao bì",
-    "băng",
-    "gioăng",
-    "gioăng, ",
-    "làm Jig",
-    "khuôn",
-    # Misc excluded
-    "điện",
-    "bột",
-    "Bột",
-    "pvc",
-    "titanium",
-    "mài",
-    "mòn",
-    "kích",
-    "nở",
-    "khử",
-    "CATALYST",
-    "3D,",
-    "Bag",
-]
-
-# Extra terms by product line (merged on top of DESCRIPTION_BLACKLIST_TERMS)
-DESCRIPTION_BLACKLIST_EXTRA_BY_PRODUCT: dict[str, list[str]] = {
-    "MDI": [],
-    "PMDI": [],
-    "TDI": [],
-}
-
-# Deprecated — blacklist terms live in DESCRIPTION_BLACKLIST_* above
+# ── Upload ingest ────────────────────────────────────────────────────────────
+# Sidebar uploads must match the ML prediction export schema (e.g. data/predictions_pmdi_etl.csv):
+# English columns, BRAND NAME / SUPPLIER / TYPE, optional marked_for_delete (Yes rows are dropped).
 
 # Filenames that must not live under data/ (kept in app_config/)
 APP_REFERENCE_DATA_FILENAMES = frozenset({"customer_list.csv"})
@@ -233,6 +90,9 @@ SALER_NAME_REGEX_REMOVE: list[str] = [
     r"\bgmbh\b",
     r"\bltd\.?\b",
     r"\bco\.?\b",
+    # Jurisdiction boilerplate (e.g. Covestro Hong Kong legal entity lines)
+    r"\bincorporated\s+in\s+(?:the\s+)?hong\s*kong\s*sar\b",
+    r"\bin\s+(?:the\s+)?hong\s*kong\s*sar\b",
 ]
 
 # Step 4 — strip these characters (each → space, then spaces collapsed to one)
@@ -242,7 +102,11 @@ SALER_NAME_STRIP_CHARACTERS = ".,()/-&"
 SALER_NAME_REGEX_MAP: list[tuple[str, str]] = []
 
 # Step 7 — optional exact alias overrides (canonical → extra spellings)
-SALER_NAME_MAP: dict[str, list[str]] = {}
+SALER_NAME_MAP: dict[str, list[str]] = {
+    "COVESTRO HONG KONG": [
+        "COVESTRO HONG KONG IN HONG KONG SAR",
+    ],
+}
 
 # App seed dataset filenames (full files live in DEFAULT_DATASETS_DIR / app_data)
 DEFAULT_DATASET_FILENAMES = {
@@ -401,9 +265,6 @@ SUPPLIER_COMPARE_FALLBACK_COLORS = [
     "#FBBF24",
 ]
 
-DEFAULT_RAW_DATASET = DATA_DIR / "raw_mdi_q1_2026.csv"
-DEFAULT_INFERENCE_DATASET = DATA_DIR / "raw_mdi_q1_2026_dataset.csv"
-
 # ── ML / analytics targets (same names for PMDI and TDI; match by name not column index) ──
 COL_BRAND_NAME = "BRAND NAME"
 COL_SUPPLIER = "SUPPLIER"
@@ -423,13 +284,3 @@ PREDICT_CONFIDENCE_COLUMNS = (
     COL_SUPPLIER_CONFIDENCE,
 )
 
-# ── ML features + targets ──────────────────────────────────────────────────
-ML_COLUMN_CONFIG = {
-    "hs_code": "hs_code",
-    "product_description": "description",
-    "saler": "saler",
-    "country_origin": "country_origin",
-    "label": COL_BRAND_NAME,
-    "type_col": COL_TYPE,
-    "supplier_col": COL_SUPPLIER,
-}

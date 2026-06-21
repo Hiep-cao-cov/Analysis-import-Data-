@@ -31,37 +31,6 @@ def is_standardized_dataset(df: pd.DataFrame) -> bool:
     return len(cols & STANDARDIZED_MARKERS) >= 3
 
 
-def is_prediction_upload_format(df: pd.DataFrame) -> bool:
-    """
-    Prediction CSV with Vietnamese customs headers + ML columns
-    (e.g. predictions_pmdi_4_5_2026.csv) — always needs full ETL on upload.
-    """
-    from services.ml_columns import has_ml_target_columns, normalize_ml_column_names
-
-    out = normalize_ml_column_names(df)
-    if not has_ml_target_columns(out):
-        return False
-    cols = _normalize_columns(out)
-    return bool(cols & RAW_MARKERS) and "hs_code" not in cols
-
-
-def run_upload_etl(
-    source: Path,
-    *,
-    hs_codes: list[str] | None = None,
-    unit_filter: str = "kg",
-    apply_description_blacklist: bool = False,
-) -> pd.DataFrame:
-    """Full ETL pipeline for uploads — same steps as run_etl, explicit entry point."""
-    codes = hs_codes if hs_codes else infer_hs_codes_for_path(source)
-    return run_etl(
-        source,
-        hs_codes=codes,
-        unit_filter=unit_filter or None,
-        apply_description_blacklist=apply_description_blacklist,
-    )
-
-
 def infer_hs_codes_for_path(path: Path) -> list[str] | None:
     """Pick HS filter from filename (PMDI vs TDI); None → ETL default (MDI)."""
     from config.settings import TDI_HS_CODES
@@ -97,7 +66,6 @@ def load_and_standardize(
     save_path: Path | None = None,
     force_etl: bool = False,
     hs_codes: list[str] | None = None,
-    rows_to_drop: str | None = None,
 ) -> tuple[pd.DataFrame, str]:
     """
     Load CSV/Excel. Run ETL if raw customs export; otherwise use as-is.
@@ -111,7 +79,6 @@ def load_and_standardize(
             hs_codes=hs_codes,
             unit_filter=unit_filter or None,
             save_path=save_path,
-            rows_to_drop=rows_to_drop,
         )
         msg = f"ETL applied · {len(df):,} rows standardized"
         if save_path:

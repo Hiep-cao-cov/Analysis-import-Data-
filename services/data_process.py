@@ -1,8 +1,6 @@
 import pandas as pd
 import os
 import numpy as np
-import unicodedata
-import re
 # ==========================================
 # 1. STANDALONE FLEXIBLE UTILITY FUNCTION
 # ==========================================
@@ -34,14 +32,11 @@ class OrderDataPipeline:
     def __init__(
         self,
         cols_to_drop=None,
-        rows_to_drop=None,
         target_units=None,
         numeric_parser=parse_string_to_float,
         default_decimals=2,
         *,
-        blacklist_terms: list[str] | None = None,
         product_line: str | None = None,
-        apply_description_blacklist: bool = True,
     ):
         self.cols_to_drop = [str(col).strip().lower() for col in cols_to_drop] if cols_to_drop is not None else ['cang xuat nhap', 
                                                                                                                  'phuong tien van tai', 'cang nuoc ngoai']
@@ -53,22 +48,7 @@ class OrderDataPipeline:
         
         self.numeric_parser = numeric_parser
         self.default_decimals = default_decimals
-        self.rows_to_drop = rows_to_drop
         self._product_line = product_line
-        self._apply_description_blacklist = apply_description_blacklist
-        self._blacklist_terms = self._load_blacklist_terms(blacklist_terms)
-
-    def extend_blacklist(self, extra_terms: list[str]) -> None:
-        """Append blacklist terms (prefer editing config/settings.py instead)."""
-        from services.description_blacklist import normalize_description_text
-
-        seen = {normalize_description_text(t) for t in self._blacklist_terms}
-        for term in extra_terms:
-            text = str(term).strip()
-            normalized = normalize_description_text(text)
-            if normalized and normalized not in seen:
-                self._blacklist_terms.append(text)
-                seen.add(normalized)
 
     def _snapshot_export_values(self, df: pd.DataFrame) -> pd.DataFrame:
         """Keep pre-ETL cell values so prediction export can match the input file."""
@@ -79,50 +59,6 @@ class OrderDataPipeline:
             if col_str == "_predict_row_id" or col_str.startswith(EXPORT_PRESERVE_PREFIX):
                 continue
             df[f"{EXPORT_PRESERVE_PREFIX}{col_str}"] = df[col].copy()
-        return df
-        
-    def _normalize_text(self, text):
-        """Aggressively normalize text for matching."""
-        text = unicodedata.normalize('NFC', str(text).strip().lower())
-        text = text.replace('\xa0', ' ')       # non-breaking space → regular space
-        text = re.sub(r'\s+', ' ', text)       # collapse multiple spaces
-        text = text.strip()
-        return text
-    
-    def _load_blacklist_terms(self, blacklist_terms: list[str] | None):
-        from services.description_blacklist import get_description_blacklist_terms
-
-        if blacklist_terms is not None:
-            return list(blacklist_terms)
-        return get_description_blacklist_terms(product_line=self._product_line)
-
-    def filter_by_description_blacklist(self, df):
-        #print(f"🔍 DEBUG: blacklist_terms count = {len(self._blacklist_terms)}")
-        #print(f"🔍 DEBUG: first 5 terms = {self._blacklist_terms[:5]}")
-        #print(f"🔍 DEBUG: first 5 terms repr = {[repr(t) for t in self._blacklist_terms[:5]]}")
-
-        if not self._blacklist_terms:
-            print("[WARN] EMPTY blacklist - skipping!")
-            return df
-
-        col = 'chung loai hang hoa xuat nhap'
-        if col not in df.columns:
-            print(f"[WARN] Column '{col}' not found!")
-            return df
-
-        normalized_desc = df[col].astype(str).apply(self._normalize_text)
-        from services.description_blacklist import mask_blacklisted_descriptions
-
-        mask_to_delete = mask_blacklisted_descriptions(
-            normalized_desc,
-            self._blacklist_terms,
-            product_line=self._product_line,
-        )
-
-        deleted_count = mask_to_delete.sum()
-        df = df[~mask_to_delete].copy()
-
-        print(f"[INFO] Blacklist Filter: {deleted_count:,} rows deleted, {len(df):,} rows remaining.")
         return df
 
     def load_data(self, file_path):
@@ -253,8 +189,6 @@ class OrderDataPipeline:
         df = self.clean_numeric_and_tax(df)
         df = self.process_dates(df)
         df = self.handle_missing_values(df)
-        if self._apply_description_blacklist:
-            df = self.filter_by_description_blacklist(df)
         df = self.standardize_units(df)
         df = self.standardize_prices_to_usd(df) # Creates the new column here
         

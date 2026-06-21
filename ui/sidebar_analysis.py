@@ -8,10 +8,11 @@ import streamlit as st
 
 
 
-from config.settings import ANALYSIS_DATASET_OPTIONS, SALE_CHANNEL_FILTER_OPTIONS, TYPE_SALE_FILTER_OPTIONS, UPLOAD_SKIP_DESCRIPTION_BLACKLIST_DEFAULT
+from config.settings import ANALYSIS_DATASET_OPTIONS, SALE_CHANNEL_FILTER_OPTIONS, TYPE_SALE_FILTER_OPTIONS
 from services.analysis_service import filter_options
 from services.customer_filter_service import (
     customer_id_to_name,
+    default_customer_id,
     resolve_customer_filter_options,
 )
 from services.supplier_filter_service import resolve_supplier_filter_options
@@ -139,6 +140,7 @@ def _get_market_overview_sidebar_options(
 
 
 _FILTER_DATASET_SIG_KEY = "_filter_dataset_sig"
+_PENDING_FILTER_SYNC_KEY = "_pending_analysis_filter_sync"
 # Shared across Market overview (Tab 1) and Supplier deep dive (Tab 2)
 ANALYSIS_FILTER_YEAR = "analysis_year"
 ANALYSIS_FILTER_SUPPLIER = "analysis_supplier"
@@ -180,6 +182,92 @@ def _default_material_type_for_dataset(types: list[str]) -> str:
             if "TDI" in str(t).strip().upper():
                 return t
     return types[0]
+
+
+def queue_analysis_filter_sync(df, *, source_name: str) -> None:
+    """Store filter values to apply before sidebar widgets render (next or same run)."""
+    from config.settings import SALE_CHANNEL_COLUMN, SALE_CHANNEL_FILTER_OPTIONS
+    from services.analysis_service import filter_options, resolve_type_column
+    from services.sale_channel_service import filter_by_sale_channel
+    from services.supplier_filter_service import resolve_supplier_filter_options
+
+    if df is None or getattr(df, "empty", True):
+        return
+
+    opts = filter_options(df)
+    years = opts.get("years", [])
+    types = opts.get("material_types", [])
+    mode = _normalize_analysis_dataset_mode(st.session_state.get("analysis_mode", "MDI"))
+    sig = f"{mode}|{source_name}|{'|'.join(types)}"
+    if st.session_state.get(_FILTER_DATASET_SIG_KEY) == sig:
+        return
+
+    pending: dict[str, object] = {}
+
+    if SALE_CHANNEL_COLUMN in df.columns:
+        best_channel = SALE_CHANNEL_FILTER_OPTIONS[0]
+        best_count = -1
+        for channel in SALE_CHANNEL_FILTER_OPTIONS:
+            count = len(filter_by_sale_channel(df, channel))
+            if count > best_count:
+                best_count = count
+                best_channel = channel
+        if best_count > 0:
+            pending["analysis_sale_channel"] = best_channel
+
+    if years:
+        pending[ANALYSIS_FILTER_YEAR] = str(years[-1])
+
+    material_type = _default_material_type_for_dataset(types) if types else ""
+    if types:
+        pending[ANALYSIS_FILTER_MTYPE] = material_type
+
+    sale_channel = str(
+        pending.get("analysis_sale_channel", SALE_CHANNEL_FILTER_OPTIONS[0])
+    )
+    supplier_col = "supplier_raw" if "supplier_raw" in df.columns else "supplier_group"
+    if material_type:
+        resolved_suppliers = resolve_supplier_filter_options(
+            df,
+            dataset_label=mode,
+            material_type=material_type,
+            sale_channel=sale_channel,
+            type_col=resolve_type_column(df),
+            supplier_col=supplier_col,
+        )
+        if resolved_suppliers:
+            pending[ANALYSIS_FILTER_SUPPLIER] = resolved_suppliers[0]
+
+    year_int = int(pending[ANALYSIS_FILTER_YEAR]) if years else None
+    if material_type:
+        default_customer = default_customer_id(
+            df,
+            material_type=material_type,
+            sale_channel=sale_channel,
+            year=year_int,
+        )
+        if default_customer:
+            pending[ANALYSIS_FILTER_CUSTOMER] = default_customer
+
+    pending[_FILTER_DATASET_SIG_KEY] = sig
+
+    if pending:
+        st.session_state[_PENDING_FILTER_SYNC_KEY] = pending
+
+
+def apply_pending_analysis_filter_sync() -> None:
+    """Apply queued filter sync — must run before any filter widget is drawn."""
+    pending = st.session_state.pop(_PENDING_FILTER_SYNC_KEY, None)
+    if not pending:
+        return
+    for key, value in pending.items():
+        st.session_state[key] = value
+
+
+def sync_analysis_filters_for_dataframe(df, *, source_name: str) -> None:
+    """Align sidebar filters with the active dataframe (upload preview or dataset swap)."""
+    queue_analysis_filter_sync(df, source_name=source_name)
+    apply_pending_analysis_filter_sync()
 
 
 def _migrate_legacy_analysis_filter_keys() -> None:
@@ -332,18 +420,19 @@ def _render_overview_filter_expander(
         scope_type_sale=include_type_sale,
     )
     types = _get_material_types()
-    if not years or not suppliers:
+    if not years:
         return
 
-    _ensure_year_supplier_keys(
-        years,
-        suppliers,
-        year_key=ANALYSIS_FILTER_YEAR,
-        supplier_key=ANALYSIS_FILTER_SUPPLIER,
-    )
+    if suppliers:
+        _ensure_year_supplier_keys(
+            years,
+            suppliers,
+            year_key=ANALYSIS_FILTER_YEAR,
+            supplier_key=ANALYSIS_FILTER_SUPPLIER,
+        )
 
     current_year = st.session_state.get(ANALYSIS_FILTER_YEAR, years[-1])
-    current_supplier = st.session_state.get(ANALYSIS_FILTER_SUPPLIER, suppliers[0])
+    current_supplier = st.session_state.get(ANALYSIS_FILTER_SUPPLIER)
 
     with st.expander(expander_title, expanded=True):
         _sale_channel_selectbox(key="analysis_sale_channel")
@@ -355,23 +444,36 @@ def _render_overview_filter_expander(
             index=years.index(current_year) if current_year in years else len(years) - 1,
             key=ANALYSIS_FILTER_YEAR,
         )
-        st.selectbox(
-            "Supplier",
-            suppliers,
-            index=suppliers.index(current_supplier)
-            if current_supplier in suppliers
-            else 0,
-            key=ANALYSIS_FILTER_SUPPLIER,
-        )
+        if suppliers:
+            supplier_index = (
+                suppliers.index(current_supplier)
+                if current_supplier in suppliers
+                else 0
+            )
+            st.selectbox(
+                "Supplier",
+                suppliers,
+                index=supplier_index,
+                key=ANALYSIS_FILTER_SUPPLIER,
+            )
+        else:
+            st.caption(
+                "No suppliers for the current **sale channel** and **material type**. "
+                "Upload data is often **Local** — switch sale channel from Indent to Local."
+            )
         _material_type_selectbox(types, key=ANALYSIS_FILTER_MTYPE)
 
 
-def _ensure_customer_key(
+def _sync_customer_selection(
     customer_ids: list[str],
     *,
-    customer_key: str,
+    customer_key: str = ANALYSIS_FILTER_CUSTOMER,
 ) -> None:
-    if customer_ids and st.session_state.get(customer_key) not in customer_ids:
+    """Pick the top-volume customer when none selected or current has no data in scope."""
+    if not customer_ids:
+        return
+    current = st.session_state.get(customer_key)
+    if not current or str(current) not in customer_ids:
         st.session_state[customer_key] = customer_ids[0]
 
 
@@ -415,17 +517,11 @@ def _get_customer_sidebar_options() -> tuple[list[str], list[tuple[str, str]]]:
     if year_int is None and years:
         year_int = int(years[-1])
 
-    ensure_ids: list[str] = []
-    current = st.session_state.get(ANALYSIS_FILTER_CUSTOMER)
-    if current:
-        ensure_ids.append(str(current))
-
     customer_options = resolve_customer_filter_options(
         df,
         material_type=material_type,
         sale_channel=sale_channel,
         year=year_int,
-        ensure_ids=ensure_ids,
     )
     return years, customer_options
 
@@ -445,7 +541,7 @@ def render_customer_overview_filters() -> None:
 
     customer_ids = [cid for cid, _ in customer_options]
     id_to_name = customer_id_to_name(customer_options)
-    _ensure_customer_key(customer_ids, customer_key=ANALYSIS_FILTER_CUSTOMER)
+    _sync_customer_selection(customer_ids, customer_key=ANALYSIS_FILTER_CUSTOMER)
 
     current_year = st.session_state.get(ANALYSIS_FILTER_YEAR, years[-1])
 
@@ -523,12 +619,9 @@ def render_shared_data_sidebar() -> None:
 
         st.session_state.dash_merge_requested = False
 
-        from ui.upload_preview_panel import clear_upload_preview_cache, reset_upload_skip_blacklist_default
+        from ui.upload_preview_panel import clear_upload_preview_cache
 
         clear_upload_preview_cache()
-        if source_mode == "Upload new file":
-            reset_upload_skip_blacklist_default()
-
         _reset_analysis_filters_for_dataset_change()
 
 
@@ -545,28 +638,7 @@ def render_shared_data_sidebar() -> None:
 
         )
 
-        from ui.upload_preview_panel import (
-            render_upload_preview_panel,
-            reset_upload_skip_blacklist_default,
-        )
-
-        if uploaded is not None:
-            file_token = f"{uploaded.name}:{len(uploaded.getvalue())}"
-            if st.session_state.get("dash_upload_file_token") != file_token:
-                st.session_state.dash_upload_file_token = file_token
-                reset_upload_skip_blacklist_default()
-        else:
-            st.session_state.pop("dash_upload_file_token", None)
-
-        st.checkbox(
-            "Skip description blacklist (keep all rows)",
-            value=UPLOAD_SKIP_DESCRIPTION_BLACKLIST_DEFAULT,
-            key="dash_skip_description_blacklist",
-            help=(
-                "Checked by default — Full ETL keeps every row. Uncheck to remove rows "
-                "matching DESCRIPTION_BLACKLIST_TERMS in config/settings.py."
-            ),
-        )
+        from ui.upload_preview_panel import render_upload_preview_panel
 
         merge_ready = render_upload_preview_panel(uploaded)
 
@@ -589,6 +661,7 @@ def render_analysis_sidebar() -> str:
 
     """Full Data Analysis sidebar — three collapsible sections matching the same pattern."""
 
+    apply_pending_analysis_filter_sync()
     _migrate_legacy_analysis_filter_keys()
 
     with st.expander(":green[Analysis mode]", expanded=True):

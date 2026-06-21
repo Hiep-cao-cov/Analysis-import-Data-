@@ -16,7 +16,6 @@ from services.data_process import (
     parse_string_to_float,
     rename_dataframe_columns,
 )
-from services.description_blacklist import get_description_blacklist_terms
 from services.ml_columns import normalize_ml_column_names
 from services.customer_name_service import apply_customer_short_names
 from services.saler_name_service import apply_saler_name_standardization
@@ -34,21 +33,14 @@ def _product_line_for_hs_codes(hs_codes: list[str] | None) -> str | None:
     return None
 
 
-def build_pipeline(
-    *,
-    hs_codes: list[str] | None = None,
-    apply_description_blacklist: bool = True,
-) -> OrderDataPipeline:
+def build_pipeline(*, hs_codes: list[str] | None = None) -> OrderDataPipeline:
     product_line = _product_line_for_hs_codes(hs_codes)
-    blacklist_terms = get_description_blacklist_terms(product_line=product_line)
     return OrderDataPipeline(
         cols_to_drop=UNWANTED_COLS,
         target_units=ALLOWED_UNITS,
         numeric_parser=parse_string_to_float,
         default_decimals=3,
-        blacklist_terms=blacklist_terms,
         product_line=product_line,
-        apply_description_blacklist=apply_description_blacklist,
     )
 
 
@@ -58,18 +50,10 @@ def run_etl(
     hs_codes: list[str] | None = None,
     unit_filter: str = "kg",
     save_path: str | Path | None = None,
-    rows_to_drop: str | None = None,
-    apply_description_blacklist: bool = True,
 ) -> pd.DataFrame:
-    """
-    Full ETL: load raw file → pipeline → HS filter → rename → optional unit filter.
-    """
-    _ = rows_to_drop  # deprecated — blacklist terms are in config/settings.py
+    """Full ETL: load raw file → pipeline → HS filter → rename → optional unit filter."""
     hs_codes = MDI_HS_CODES if hs_codes is None else hs_codes
-    pipeline = build_pipeline(
-        hs_codes=hs_codes,
-        apply_description_blacklist=apply_description_blacklist,
-    )
+    pipeline = build_pipeline(hs_codes=hs_codes)
     df = pipeline.run(str(raw_path))
     if hs_codes:
         df = filter_by_hs_code(df, hs_codes)

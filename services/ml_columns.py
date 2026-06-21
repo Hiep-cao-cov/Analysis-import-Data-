@@ -100,6 +100,39 @@ _STORAGE_DERIVED_COLUMNS = (
 )
 
 
+def _normalized_column_key(name: str) -> str:
+    return str(name).strip().lower()
+
+
+def _unwanted_column_keys() -> set[str]:
+    from config.settings import UNWANTED_COLS
+
+    return {_normalized_column_key(c) for c in UNWANTED_COLS}
+
+
+def _column_is_empty(series: pd.Series) -> bool:
+    if series.isna().all():
+        return True
+    text = series.astype(str).str.strip().str.lower()
+    return text.replace({"nan": "", "none": ""}, regex=False).eq("").all()
+
+
+def drop_upload_noise_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove ETL-unwanted and all-empty columns before storage/download."""
+    if df.empty:
+        return df
+
+    unwanted = _unwanted_column_keys()
+    drop: list[str] = []
+    for col in df.columns:
+        key = _normalized_column_key(col)
+        if key in unwanted or _column_is_empty(df[col]):
+            drop.append(col)
+    if not drop:
+        return df
+    return df.drop(columns=list(dict.fromkeys(drop)), errors="ignore")
+
+
 def prepare_dataset_for_storage(df: pd.DataFrame) -> pd.DataFrame:
     """Remove internal, duplicate, and predict-only columns before saving CSV."""
     from config.settings import COL_BRAND_NAME, COL_TYPE, PREDICT_CONFIDENCE_COLUMNS
@@ -132,4 +165,5 @@ def prepare_dataset_for_storage(df: pd.DataFrame) -> pd.DataFrame:
     for col in (*_STORAGE_DERIVED_COLUMNS, MARK_FOR_DELETE_COL, DELETE_REASON_COL, *PREDICT_CONFIDENCE_COLUMNS):
         if col in out.columns:
             drop.append(col)
-    return out.drop(columns=list(dict.fromkeys(drop)), errors="ignore")
+    out = out.drop(columns=list(dict.fromkeys(drop)), errors="ignore")
+    return drop_upload_noise_columns(out)

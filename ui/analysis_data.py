@@ -14,7 +14,7 @@ import streamlit as st
 
 
 
-from config.settings import COL_BRAND_NAME, COL_SUPPLIER, COL_TYPE, UPLOAD_SKIP_DESCRIPTION_BLACKLIST_DEFAULT
+from config.settings import COL_BRAND_NAME, COL_SUPPLIER, COL_TYPE
 from services.analysis_service import prepare_analysis_frame
 from services.data_loader_service import load_and_standardize, load_file
 from services.upload_ingest_service import ingest_upload_file, load_storage_dataset
@@ -81,11 +81,35 @@ def prepare_dataframe_for_analysis(
     if df.empty:
         return df
     product_line = product_line_for_hs_codes(hs_codes, path=path)
-    if path is None or is_seed_dataset_path(path):
-        df = apply_customer_short_names(df)
+    df = apply_customer_short_names(df)
     df = apply_saler_name_standardization(df)
     df = apply_type_sale_column(df, product_line=product_line)
     return add_volume_ton(prepare_analysis_frame(df))
+
+
+def load_upload_for_dashboard(
+    source: Path,
+    *,
+    hs_codes: list[str] | None = None,
+) -> pd.DataFrame:
+    """Ingest upload, then build dashboard_df with the same steps as the default seed file."""
+    storage_df = ingest_upload_file(source, hs_codes=hs_codes)
+    return prepare_dataframe_for_analysis(storage_df, hs_codes=hs_codes, path=source)
+
+
+def finish_dashboard_load(
+    df: pd.DataFrame,
+    source_name: str,
+    *,
+    message: str | None = None,
+) -> None:
+    """Set session dashboard state and align sidebar filters with the loaded dataset."""
+    from ui.sidebar_analysis import queue_analysis_filter_sync
+
+    set_dataframe(df, source_name)
+    queue_analysis_filter_sync(df, source_name=source_name)
+    if message is not None:
+        st.session_state.dashboard_msg = message
 
 
 def is_upload_preview_source(source_name: str | None) -> bool:
@@ -103,7 +127,6 @@ def ingest_file(source: Path, *, force_etl: bool, hs_codes: list[str] | None = N
         unit_filter="kg",
         force_etl=force_etl,
         hs_codes=hs_codes if hs_codes is not None else [],
-        rows_to_drop=None,
     )
     return prepare_dataframe_for_analysis(df, hs_codes=hs_codes, path=source)
 
@@ -307,16 +330,11 @@ def apply_data_source_selection(dataset_mode: str, hs_codes: list[str] | None = 
 
             temp.write_bytes(uploaded.getvalue())
 
-            with st.spinner("Processing uploaded file (full ETL)..."):
+            with st.spinner("Processing uploaded file…"):
 
-                apply_blacklist = not st.session_state.get(
-                    "dash_skip_description_blacklist",
-                    UPLOAD_SKIP_DESCRIPTION_BLACKLIST_DEFAULT,
-                )
                 incoming_df = ingest_upload_file(
                     temp,
                     hs_codes=hs_codes,
-                    apply_description_blacklist=apply_blacklist,
                 )
 
 
@@ -366,26 +384,29 @@ def apply_data_source_selection(dataset_mode: str, hs_codes: list[str] | None = 
             merged_df = prepare_dataframe_for_analysis(
                 merged_storage, hs_codes=hs_codes, path=merge_load_path
             )
-            set_dataframe(merged_df, dataset_label)
+            unmapped = find_unmapped_customers(merged_storage)
+            st.session_state.dash_unmapped_customers = unmapped
+            finish_dashboard_load(
+                merged_df,
+                dataset_label,
+                message=(
+                    f"Update complete · Added {added_rows:,} new rows · "
+                    f"Skipped {duplicate_rows:,} duplicates · "
+                    f"Total {len(merged_storage):,} rows"
+                    + (
+                        f" · **{len(unmapped):,} new customer(s)** not in customer_list.csv "
+                        f"(see **Customer short names** in sidebar)"
+                        if not unmapped.empty
+                        else ""
+                    )
+                ),
+            )
 
             st.session_state.dash_last_merge_token = upload_token
             from ui.upload_preview_panel import clear_upload_preview_cache
 
             clear_upload_preview_cache()
             st.session_state.pop("dash_upload_preview_token", None)
-            unmapped = find_unmapped_customers(merged_storage)
-            st.session_state.dash_unmapped_customers = unmapped
-
-            st.session_state.dashboard_msg = (
-                f"Update complete · Added {added_rows:,} new rows · "
-                f"Skipped {duplicate_rows:,} duplicates · "
-                f"Total {len(merged_storage):,} rows"
-            )
-            if not unmapped.empty:
-                st.session_state.dashboard_msg += (
-                    f" · **{len(unmapped):,} new customer(s)** not in customer_list.csv "
-                    f"(see **Customer short names** in sidebar)"
-                )
 
         except Exception as e:
 
@@ -425,9 +446,11 @@ def apply_data_source_selection(dataset_mode: str, hs_codes: list[str] | None = 
 
         if has_ml_target_columns(df):
 
-            set_dataframe(df, dataset_label)
-
-            st.session_state.dashboard_msg = f"Loaded default file · {len(df):,} rows"
+            finish_dashboard_load(
+                df,
+                dataset_label,
+                message=f"Loaded default file · {len(df):,} rows",
+            )
 
         else:
 

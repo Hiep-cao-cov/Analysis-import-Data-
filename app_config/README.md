@@ -6,4 +6,4 @@
 
 User CSV/Excel uploads and merged analysis files belong in **`data/`**. Seed defaults live in **`app_data/`**.
 
-Description blacklist terms are configured in **`config/settings.py`** (`DESCRIPTION_BLACKLIST_TERMS`).
+Uploads must be ML prediction exports (same schema as `data/predictions_pmdi_etl.csv`).

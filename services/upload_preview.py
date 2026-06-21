@@ -10,7 +10,7 @@ from config.settings import COL_BRAND_NAME, COL_SUPPLIER, COL_TYPE
 from services.upload_dataset_validation import validate_upload_dataset_match
 from services.upload_ingest_service import classify_upload_format
 from services.data_paths import default_dashboard_dataset_path
-from services.ml_columns import has_ml_target_columns, missing_ml_target_names
+from services.ml_columns import find_column, has_ml_target_columns, missing_ml_target_names
 
 
 @dataclass
@@ -33,7 +33,7 @@ class UploadPreviewResult:
     total_after_merge: int = 0
     already_merged: bool = False
     dataset_mismatch: bool = False
-    apply_description_blacklist: bool = False
+    merge_block_reason: str | None = None
     sample: pd.DataFrame | None = None
     processed_csv: bytes | None = None
     processed_download_name: str = ""
@@ -107,6 +107,17 @@ def _optional_column_warnings(df: pd.DataFrame) -> list[str]:
 
 
 def _sample_preview_df(df: pd.DataFrame, limit: int = 5) -> pd.DataFrame:
+    work = df
+    for canonical in (COL_BRAND_NAME, COL_SUPPLIER, COL_TYPE):
+        actual = find_column(df, canonical)
+        if actual is None:
+            break
+        series = df[actual].astype(str).str.strip()
+        mask = series.replace({"", "nan", "NaN", "None", "none"}, pd.NA).notna()
+        work = work.loc[mask]
+    else:
+        if work.empty:
+            work = df
     preferred = [
         "date",
         "year",
@@ -125,7 +136,7 @@ def _sample_preview_df(df: pd.DataFrame, limit: int = 5) -> pd.DataFrame:
     cols = [c for c in preferred if c in df.columns]
     if not cols:
         cols = list(df.columns[:8])
-    return df[cols].head(limit).copy()
+    return work[cols].head(limit).copy()
 
 
 def _year_month_keys(df: pd.DataFrame) -> set[str]:
@@ -175,7 +186,6 @@ def build_upload_preview(
     ingest_file_fn,
     load_default_data_fn,
     append_only_new_rows_fn,
-    apply_description_blacklist: bool = False,
 ) -> UploadPreviewResult:
     """
     Parse upload, validate ML columns, and dry-run merge against saved dataset.
@@ -185,7 +195,6 @@ def build_upload_preview(
     result = UploadPreviewResult(
         file_name=file_name,
         file_kind="—",
-        apply_description_blacklist=apply_description_blacklist,
     )
 
     if last_merge_token and last_merge_token == upload_token:
@@ -241,16 +250,16 @@ def build_upload_preview(
             if overlap:
                 shown = ", ".join(overlap[:6])
                 more = f" (+{len(overlap) - 6} more)" if len(overlap) > 6 else ""
-                result.error = (
+                result.merge_block_reason = (
                     "Upload month already exists in default dataset: "
                     f"{shown}{more}. Only new months can be merged."
                 )
                 result.ready_for_merge = False
-                return result
-            _, new_rows, dup_rows = append_only_new_rows_fn(base_df, incoming_df)
-            result.new_rows = new_rows
-            result.duplicate_rows = dup_rows
-            result.total_after_merge = len(base_df) + new_rows
+            else:
+                _, new_rows, dup_rows = append_only_new_rows_fn(base_df, incoming_df)
+                result.new_rows = new_rows
+                result.duplicate_rows = dup_rows
+                result.total_after_merge = len(base_df) + new_rows
         elif result.ml_ready:
             result.new_rows = len(incoming_df)
             result.duplicate_rows = 0
@@ -260,6 +269,7 @@ def build_upload_preview(
             result.ml_ready
             and not result.already_merged
             and result.error is None
+            and result.merge_block_reason is None
         )
     except Exception as exc:
         result.error = str(exc)

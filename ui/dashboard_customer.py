@@ -268,7 +268,6 @@ def render_customer_page(df: pd.DataFrame, dataset_label: str) -> None:
         material_type=material_type,
         sale_channel=sale_channel,
         year=year_int,
-        ensure_ids=[str(customer_id)] if customer_id else None,
     )
     if not customer_options:
         st.warning("No customers match the current dataset, material type, and sale channel filters.")
