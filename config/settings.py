@@ -72,6 +72,7 @@ SALER_NAME_REGEX_REMOVE: list[str] = [
     # English / Singapore / international (longest phrases first)
     r"\bthe\b",
     r"\bprivate\s+limited\b",
+    r"\bpri\s+vate\b",  # split OCR/typo for PRIVATE
     r"\bprivate\b",  # standalone, e.g. DOW CHEMICAL PACIFIC SINGAPORE PRIVATE
     r"\bpublic\s+limited\s+company\b",
     r"\bpte\.?\s*ltd\.?\b",

@@ -20,7 +20,6 @@ TABLE_COLUMNS = [
     COL_TYPE,
     "type_clean",
     COL_BRAND_NAME,
-    "material",
     "customer_name",
     "saler",
     "Sale_chanel",
@@ -28,7 +27,6 @@ TABLE_COLUMNS = [
     "total_usd",
     "unit_price",
     "country_origin",
-    "hs_code",
     "description",
 ]
 
@@ -84,33 +82,14 @@ DETAIL_DISPLAY_NAMES = {
     COL_SUPPLIER: "Supplier",
     COL_TYPE: "Material type",
     COL_BRAND_NAME: "Brand name",
-    "material": "Material (display)",
     "customer_name": "Customer",
     "saler": "Saler",
     "Sale_chanel": "Sale channel",
     "volume_ton": "Volume (ton)",
     "unit_price": "Unit price",
     "country_origin": "Origin",
-    "hs_code": "HS code",
     "description": "Description",
 }
-
-
-def _format_code_as_text(value) -> str:
-    """Format identifier codes (HS code, etc.) as plain text without float decimals."""
-    if pd.isna(value):
-        return ""
-    text = str(value).strip()
-    if not text or text.lower() in {"nan", "none"}:
-        return ""
-    num = pd.to_numeric(text, errors="coerce")
-    if pd.notna(num) and float(num).is_integer():
-        return str(int(num))
-    if "." in text:
-        whole, frac = text.split(".", 1)
-        if whole.isdigit() and frac.strip("0") == "":
-            return whole
-    return text
 
 
 def prepare_shipment_detail_table(filtered: pd.DataFrame) -> pd.DataFrame:
@@ -122,8 +101,6 @@ def prepare_shipment_detail_table(filtered: pd.DataFrame) -> pd.DataFrame:
     if "year" in table.columns:
         year_num = pd.to_numeric(table["year"], errors="coerce")
         table["year"] = year_num.apply(lambda v: "" if pd.isna(v) else str(int(v)))
-    if "hs_code" in table.columns:
-        table["hs_code"] = table["hs_code"].apply(_format_code_as_text)
     if "volume_ton" in table.columns:
         table["volume_ton"] = pd.to_numeric(table["volume_ton"], errors="coerce").round(3)
     if "unit_price" in table.columns:
