@@ -4,6 +4,8 @@ This document is a **complete specification** for rebuilding the **MDI Data Anal
 
 **Reference implementation:** existing repo at project root. **User guide:** `README.md`.
 
+**Last synced with codebase:** saler `pri vate` rule, shipment detail columns, upload-only ingest (no description blacklist), ML model folders removed from repo.
+
 ---
 
 ## 1. Product summary
@@ -14,9 +16,10 @@ Standalone **Vietnam chemical import analytics** for **MDI** and **TDI** product
 
 ### Out of scope
 
-- ML training / prediction UI (separate app exports prediction CSVs)
+- ML training / prediction UI (separate app exports prediction CSVs; no `models/` or `production_material_predictor_muilti/` in this repo)
 - User authentication
 - Database (CSV files only)
+- In-app description blacklist (upload row drops use `marked_for_delete` in the prediction file only)
 
 ### Core user flows
 
@@ -82,11 +85,14 @@ TRAIN_CUSTOM_MODEL/
 │   ├── detail_table.py
 │   └── theme.py
 ├── app_data/                  # seed CSVs (read-only defaults)
-├── data/                      # sample / working files
+├── data/                      # user working files + upload format reference
 ├── app_config/
-│   └── customer_list.csv      # customer_id → short_name
-└── temp/                      # upload staging
+│   ├── customer_list.csv      # customer_id → short_name
+│   └── README.md
+└── temp/                      # upload staging (_upload_*, _preview_*)
 ```
+
+**Not in this repo (removed / `.gitignore`):** `models/`, `production_material_predictor_muilti/` — trained weights belong to the external ML app only.
 
 ---
 
@@ -130,7 +136,9 @@ Must pass `is_standardized_dataset()`: ≥3 of `{hs_code, description, customer_
 
 Reference file: `data/predictions_pmdi_etl.csv`.
 
-Optional: `marked_for_delete` (`Yes` → row removed on ingest).
+Optional: `marked_for_delete` (`Yes` → row removed on ingest in `prepare_dataset_for_storage()`).
+
+**Upload sale channel note:** On the reference upload file, all **Indent** rows may have `marked_for_delete=Yes` and are dropped on ingest — preview/dashboards then show **Local** only. That is data-driven, not a filter bug.
 
 ---
 
@@ -168,8 +176,27 @@ Centralize **all** business rules here.
 
 ### Saler standardization
 
-- `SALER_NAME_REGEX_REMOVE`, `SALER_NAME_STRIP_CHARACTERS`, `SALER_NAME_MAP`, etc.
-- Output: uppercase canonical `saler`
+Pipeline (`services/saler_name_service.py` → `process_saler_name()`):
+
+1. Lowercase + accent fold (`Công` → `cong`)
+2. Drop `(...)` segments when inner text contains `SALER_NAME_PAREN_REMOVE_KEYWORDS` (e.g. `mst`)
+3. `SALER_NAME_REGEX_REMOVE` — legal suffixes / boilerplate (order matters; longest first), including:
+   - `\bprivate\s+limited\b`, `\bpri\s+vate\b` (split OCR for PRIVATE), `\bprivate\b`
+   - Hong Kong SAR jurisdiction lines (`incorporated in hong kong sar`, `in hong kong sar`)
+4. `SALER_NAME_STRIP_CHARACTERS` → spaces, collapse
+5. Punctuation cleanup → single spaces
+6. `_strip_trailing_legal_suffixes()` — trailing `PRIVATE`, `LIMITED`, `PTE LTD`, etc.
+7. Optional `SALER_NAME_REGEX_MAP` (pattern → canonical)
+8. Optional `SALER_NAME_MAP` (normalized key → canonical), e.g. `COVESTRO HONG KONG` ← `COVESTRO HONG KONG IN HONG KONG SAR`
+9. Uppercase final `saler`
+
+**Examples (same unique saler after step 9):**
+
+| Raw | Canonical |
+|-----|-----------|
+| `DOW CHEMICAL PACIFIC SINGAPORE PRIVATE` | `DOW CHEMICAL PACIFIC SINGAPORE` |
+| `DOW CHEMICAL PACIFIC SINGAPORE PRI VATE` | `DOW CHEMICAL PACIFIC SINGAPORE` |
+| `COVESTRO (HONG KONG) LIMITED IN HONG KONG SAR` | `COVESTRO HONG KONG` |
 
 ### Supplier filters (Tab 1 & 2)
 
@@ -202,13 +229,14 @@ Layer 3: Analysis prep     → prepare_dataframe_for_analysis() → dashboard_df
 
 ```
 default_dashboard_dataset_path(mode)     # app_data/*.csv
-  → load_file()
-  → prepare_dataframe_for_analysis()
-      → apply_customer_short_names()      # app_config/customer_list.csv
-      → apply_saler_name_standardization()
-      → apply_type_sale_column()
-      → prepare_analysis_frame()
-      → add_volume_ton()
+  → load_seed_dataset_for_analysis()
+      → load_file()
+      → prepare_dataframe_for_analysis()
+          → apply_customer_short_names()
+          → apply_saler_name_standardization()
+          → apply_type_sale_column()
+          → prepare_analysis_frame()
+          → add_volume_ton()
   → finish_dashboard_load()               # session + filter sync
 ```
 
@@ -217,21 +245,19 @@ default_dashboard_dataset_path(mode)     # app_data/*.csv
 ### 6.2 Path B — Upload new file
 
 ```
-ingest_upload_file()
-  → validate is_standardized_dataset()
-  → load_and_standardize(unit_filter="kg")
-      → add_sale_channel_column()
-      → apply_customer_short_names()
-      → apply_saler_name_standardization()
-      → apply_type_sale_column()
-  → prepare_dataset_for_storage()
-      → drop marked_for_delete=Yes
-      → drop unknown brand rows
-      → drop noise columns
-  → prepare_dataframe_for_analysis()       # same as Path A layer 3
+Sidebar uploader → temp_file_path("preview", …)
+ensure_upload_preview_dashboard()          # cached by file token + mode
+  → get_upload_preview()                   # validation + dry-run merge stats
+  → load_upload_for_dashboard()
+      → ingest_upload_file()
+          → is_standardized_dataset() gate (reject raw Vietnamese-only)
+          → load_and_standardize(unit_filter="kg")
+          → prepare_dataset_for_storage()  # marked_for_delete, unknown brand drop
+      → prepare_dataframe_for_analysis()   # same as Path A layer 3
+  → finish_dashboard_load(source=upload_preview:filename)
 ```
 
-Preview: `upload_preview_panel.py` → collapsible sidebar summary + dry-run merge.
+Preview UI: `upload_preview_panel.py` → **collapsible** sidebar expander (`Upload · Ready · N rows`), sample rows sub-expander, processed CSV download.
 
 Merge (**Update data**):
 
@@ -297,18 +323,24 @@ render_analysis_page()                    # main area
 | `analysis_customer` | Tab 3 customer_id |
 | `analysis_mtype` | Material type |
 | `analysis_type_sale` | All \| DIRECT \| INDIRECT |
+| `show_detail_data` | Shipment detail table toggle (sidebar) |
 | `dash_sidebar_upload` | Uploaded file bytes |
 | `dash_merge_requested` | Update data clicked |
+| `dash_upload_preview_token` | Upload dashboard cache token |
+| `dash_unmapped_customers` | Customers not in customer_list.csv |
+| `_filter_dataset_sig` | Prevents filter reset on same dataset |
+| `_pending_analysis_filter_sync` | Queued filter values before widgets |
 
 ### 7.3 Sidebar sections
 
 1. **Analysis mode** — subtab selector (Market / Supplier / Customer)
-2. **Dataset & data source** — MDI/TDI, default vs upload, file uploader, upload preview expander, Update data
-3. **Tab-specific filters** — only show expander for active subtab:
+2. **Dataset & data source** — MDI/TDI, default vs upload, file uploader, collapsible upload preview expander, Update data
+3. **Show detail data** — checkbox; when enabled, tabs render Shipment detail table
+4. **Tab-specific filters** — only show expander for active subtab:
    - Market: sale channel, year, supplier, material type
    - Supplier: + type_sale
    - Customer: sale channel, year, customer search selectbox, material type
-4. **Customer short names** — unmapped customers, add to CSV
+5. **Customer short names** — unmapped customers, add to CSV
 
 ### 7.4 Filter sync rules
 
@@ -318,7 +350,7 @@ render_analysis_page()                    # main area
 - Latest year
 - Default material type (PMDI for MDI, TDI for TDI)
 - First supplier in curated list
-- First customer by **volume** in scope (not alphabetical)
+- First customer by **volume** in scope via `default_customer_id()` (not alphabetical)
 
 Do **not** re-sync filters on every rerun if dataset signature unchanged.
 
@@ -332,7 +364,7 @@ Do **not** re-sync filters on every rerun if dataset signature unchanged.
 - Monthly / quarterly drill-down
 - Top customers & suppliers
 - Filters: sale channel, year, supplier, material type
-- Optional detail table (`show_detail_data`)
+- Optional **Shipment detail** table when `show_detail_data` is enabled
 
 ### Tab 2 — Supplier (`dashboard_supplier.py`)
 
@@ -347,6 +379,16 @@ Do **not** re-sync filters on every rerun if dataset signature unchanged.
 - **Compare customers:** multi-customer mode
 - Default customer = **top volume** in filtered scope (not first alphabetically)
 - Customer selectbox: searchable (`filter_mode="contains"`)
+
+### Shipment detail table (`ui/detail_table.py`) — all tabs
+
+Enabled via sidebar **Show detail data**. Built by `prepare_shipment_detail_table()` + `render_styled_table()`.
+
+**Displayed columns:** Year, Month, Quarter, Date, Supplier, Material type, Brand name, Customer, Saler, Sale channel, Volume (ton), Unit price, Origin, Description.
+
+**Hidden from display (internal / omitted):** `supplier_raw`, `supplier_group`, `type_clean`, `total_usd`, `material` (Material display), `hs_code`.
+
+Export CSV uses the same visible columns as the on-screen table. Tab 3 hides detail in **compare customers** mode.
 
 ### Shared chart module
 
@@ -386,6 +428,20 @@ def add_sale_channel_column(df) -> pd.DataFrame
 def filter_by_sale_channel(df, sale_channel) -> pd.DataFrame
 ```
 
+### `services/saler_name_service.py`
+
+```python
+def process_saler_name(value) -> str
+def apply_saler_name_standardization(df) -> pd.DataFrame
+```
+
+### `services/customer_filter_service.py`
+
+```python
+def default_customer_id(df, *, material_type, sale_channel, year) -> str | None
+def resolve_customer_filter_options(df, ...) -> list[tuple[str, str]]
+```
+
 ### `services/upload_ingest_service.py`
 
 ```python
@@ -397,10 +453,27 @@ def classify_upload_format(preview) -> str
 ### `ui/analysis_data.py`
 
 ```python
+def load_seed_dataset_for_analysis(source, hs_codes) -> pd.DataFrame
+def load_upload_for_dashboard(source, *, hs_codes) -> pd.DataFrame
 def apply_data_source_selection(dataset_mode, hs_codes) -> None
 def prepare_dataframe_for_analysis(df, *, hs_codes, path) -> pd.DataFrame
 def finish_dashboard_load(df, source_name, *, message) -> None
 def get_dataframe() -> pd.DataFrame | None
+```
+
+### `ui/upload_preview_panel.py`
+
+```python
+def ensure_upload_preview_dashboard(uploaded, *, hs_codes) -> bool
+def render_upload_preview_panel(uploaded) -> bool
+def clear_upload_preview_cache() -> None
+```
+
+### `ui/detail_table.py`
+
+```python
+def prepare_shipment_detail_table(filtered) -> pd.DataFrame
+def render_styled_table(table, *, title, subtitle, ...) -> None
 ```
 
 ---
@@ -436,7 +509,7 @@ def get_dataframe() -> pd.DataFrame | None
 ### Phase 3 — Tab 1 Market
 
 - [ ] `dashboard_market.py` + core charts in `chart_volume.py`
-- [ ] `detail_table.py` with HS code as text (no `.000000`)
+- [ ] `detail_table.py` — styled scrollable table; **omit** Material (display) and HS code from Shipment detail
 
 **Verify:** Charts render for MDI seed; filters slice data.
 
@@ -460,7 +533,7 @@ def get_dataframe() -> pd.DataFrame | None
 ### Phase 6 — Upload & merge
 
 - [ ] `upload_ingest_service.py`, `upload_preview.py`, `upload_dataset_validation.py`
-- [ ] `upload_preview_panel.py` — collapsible preview, dry-run merge
+- [ ] `upload_preview_panel.py` — collapsible preview expander, upload dashboard cache, dry-run merge
 - [ ] Upload path in `apply_data_source_selection()`
 - [ ] Merge with month overlap guard
 - [ ] `finish_dashboard_load()` for upload preview (same analysis prep as default)
@@ -509,20 +582,24 @@ def get_dataframe() -> pd.DataFrame | None
 ```bash
 streamlit run app.py
 # Default MDI → Tab 1/2/3 render
-# Upload predictions_pmdi_etl.csv → Local rows visible; check Sale_chanel counts in preview
+# Upload predictions_pmdi_etl.csv → Local rows visible (Indent may be 0 if marked_for_delete=Yes)
 # Customer filter → top-volume default, not alphabetical
+# Saler: DOW … PRIVATE / PRI VATE → DOW CHEMICAL PACIFIC SINGAPORE
 # Saler: COVESTRO (HONG KONG) LIMITED variants → COVESTRO HONG KONG
+# Show detail data → Shipment detail without Material (display) or HS code columns
 ```
 
 ---
 
 ## 13. Non-goals / constraints
 
-- Do not require ML app in same repo
+- Do not require ML app or model weights in same repo (`models/` gitignored and removed)
 - Do not use SQL or API backend
 - Sidebar upload accepts **standardized ML export only** (not raw Vietnamese-only CSV)
-- Row deletion for upload comes from **`marked_for_delete`** in prediction file (not in-app description blacklist)
+- Row deletion for upload comes from **`marked_for_delete`** in prediction file (no `description_blacklist` module)
+- Unknown-brand rows dropped in `prepare_dataset_for_storage()` via `brand_labels.should_mark_unknown_brand_row()`
 - Seed file on disk not modified on dashboard load (in-memory enrichment only)
+- Legacy seed `default_MDI.csv` is not used — MDI default is `final_pmdi_2022_2025_30_may.csv` only
 
 ---
 
