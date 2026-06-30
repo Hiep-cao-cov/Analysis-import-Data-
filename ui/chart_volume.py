@@ -111,15 +111,28 @@ def _supplier_color(color_map: dict[str, str], supplier: str) -> str:
 
 def build_supplier_compare_color_map(suppliers: list[str]) -> dict[str, str]:
     """Fixed bar colors for Compare suppliers volume chart."""
-    used_colors = set(SUPPLIER_COMPARE_BAR_COLORS.values())
+    return _build_entity_compare_color_map(suppliers, curated_map=SUPPLIER_COMPARE_BAR_COLORS)
+
+
+def build_saler_compare_color_map(salers: list[str]) -> dict[str, str]:
+    """Distinct bar colors for Compare salers mode (no fixed brand map)."""
+    return _build_entity_compare_color_map(salers, curated_map={})
+
+
+def _build_entity_compare_color_map(
+    entities: list[str],
+    *,
+    curated_map: dict[str, str],
+) -> dict[str, str]:
+    used_colors = set(curated_map.values())
     fallbacks = [c for c in SUPPLIER_COMPARE_FALLBACK_COLORS if c not in used_colors]
     result: dict[str, str] = {}
     fallback_idx = 0
 
-    for sup in suppliers:
-        mapped = SUPPLIER_COMPARE_BAR_COLORS.get(supplier_filter_key(sup))
+    for entity in entities:
+        mapped = curated_map.get(supplier_filter_key(entity))
         if mapped:
-            result[str(sup)] = mapped
+            result[str(entity)] = mapped
             continue
 
         color: str | None = None
@@ -133,7 +146,7 @@ def build_supplier_compare_color_map(suppliers: list[str]) -> dict[str, str]:
         if color is None:
             color = SUPPLIER_CHART_PALETTE[fallback_idx % len(SUPPLIER_CHART_PALETTE)]
             fallback_idx += 1
-        result[str(sup)] = color
+        result[str(entity)] = color
 
     return result
 
@@ -717,26 +730,34 @@ def _format_compare_period_label(period: str, period_col: str) -> str:
     return str(period).upper()
 
 
-def build_multi_supplier_period_metrics(
+def build_multi_entity_period_metrics(
     df: pd.DataFrame,
     *,
     material_type: str,
-    suppliers: list[str],
+    entities: list[str],
+    entity_col: str,
     type_col: str,
     supplier_col: str,
     period_col: str,
     period_order: dict[str, int] | None = None,
     year_filter: int | None = None,
+    scope_supplier: str | None = None,
 ) -> tuple[pd.DataFrame, list[str], list[str]]:
     """
-    Long-format metrics for supplier comparison.
-    Returns (metrics_df, period_keys, period_labels).
+    Long-format metrics for entity comparison (suppliers or salers).
+    Returns (metrics_df with entity column, period_keys, period_labels).
+    market_ton = total volume in scope for each period (material + optional supplier filter).
     """
-    empty = pd.DataFrame(columns=["period", "supplier", "volume_ton", "market_ton", "share_pct"])
-    if df.empty or not suppliers or period_col not in df.columns:
+    empty = pd.DataFrame(columns=["period", "entity", "volume_ton", "market_ton", "share_pct"])
+    if df.empty or not entities or period_col not in df.columns or entity_col not in df.columns:
         return empty, [], []
 
     base = filter_by_material_type(df, material_type, type_col=type_col)
+    if scope_supplier is not None:
+        sel = str(scope_supplier).strip().casefold()
+        base = base[
+            base[supplier_col].astype(str).str.strip().str.casefold() == sel
+        ].copy()
     if year_filter is not None and "year" in base.columns:
         base = base[base["year"] == year_filter].copy()
     if base.empty:
@@ -764,15 +785,15 @@ def build_multi_supplier_period_metrics(
     for period in period_keys:
         period_df = work[work[period_col].astype(str) == str(period)]
         market_ton = float(period_df["volume_ton"].sum())
-        for sup in suppliers:
-            sel = str(sup).strip().casefold()
-            mask = period_df[supplier_col].astype(str).str.strip().str.casefold() == sel
+        for entity in entities:
+            sel = str(entity).strip().casefold()
+            mask = period_df[entity_col].astype(str).str.strip().str.casefold() == sel
             vol = float(period_df.loc[mask, "volume_ton"].sum())
             share_pct = (vol / market_ton * 100) if market_ton > 0 else 0.0
             rows.append(
                 {
                     "period": str(period),
-                    "supplier": sup,
+                    "entity": entity,
                     "volume_ton": vol,
                     "market_ton": market_ton,
                     "share_pct": round(share_pct, 1),
@@ -782,6 +803,75 @@ def build_multi_supplier_period_metrics(
     metrics_df = pd.DataFrame(rows)
     period_labels = [_format_compare_period_label(p, period_col) for p in period_keys]
     return metrics_df, period_keys, period_labels
+
+
+def build_multi_supplier_period_metrics(
+    df: pd.DataFrame,
+    *,
+    material_type: str,
+    suppliers: list[str],
+    type_col: str,
+    supplier_col: str,
+    period_col: str,
+    period_order: dict[str, int] | None = None,
+    year_filter: int | None = None,
+) -> tuple[pd.DataFrame, list[str], list[str]]:
+    """
+    Long-format metrics for supplier comparison.
+    Returns (metrics_df, period_keys, period_labels).
+    """
+    metrics_df, period_keys, period_labels = build_multi_entity_period_metrics(
+        df,
+        material_type=material_type,
+        entities=suppliers,
+        entity_col=supplier_col,
+        type_col=type_col,
+        supplier_col=supplier_col,
+        period_col=period_col,
+        period_order=period_order,
+        year_filter=year_filter,
+    )
+    if metrics_df.empty:
+        return metrics_df, period_keys, period_labels
+    return (
+        metrics_df.rename(columns={"entity": "supplier"}),
+        period_keys,
+        period_labels,
+    )
+
+
+def build_multi_saler_period_metrics(
+    df: pd.DataFrame,
+    *,
+    selected_supplier: str,
+    material_type: str,
+    salers: list[str],
+    type_col: str,
+    supplier_col: str,
+    period_col: str,
+    period_order: dict[str, int] | None = None,
+    year_filter: int | None = None,
+) -> tuple[pd.DataFrame, list[str], list[str]]:
+    """Compare salers within one sidebar supplier — share is % of that supplier's volume."""
+    metrics_df, period_keys, period_labels = build_multi_entity_period_metrics(
+        df,
+        material_type=material_type,
+        entities=salers,
+        entity_col="saler",
+        type_col=type_col,
+        supplier_col=supplier_col,
+        period_col=period_col,
+        period_order=period_order,
+        year_filter=year_filter,
+        scope_supplier=selected_supplier,
+    )
+    if metrics_df.empty:
+        return metrics_df, period_keys, period_labels
+    return (
+        metrics_df.rename(columns={"entity": "supplier"}),
+        period_keys,
+        period_labels,
+    )
 
 
 def _supplier_series_by_period(
@@ -840,49 +930,40 @@ def _format_compare_share_chart_title(
     return f"Compare market share · {mt_label} · {period_caption}"
 
 
-def render_supplier_compare_volume_chart(
+def _render_compare_volume_chart(
     metrics_df: pd.DataFrame,
     *,
-    suppliers: list[str],
+    entities: list[str],
     period_labels: list[str],
     period_keys: list[str],
-    material_type: str,
+    chart_title: str,
+    format_entity_name,
     color_map: dict[str, str],
-    period_mode: str,
-    year_int: int,
-    sale_channel: str,
-    period_caption: str,
-    empty_message: str = "No volume data for the selected suppliers.",
+    total_market_label: str,
+    chart_key: str,
+    empty_message: str,
 ) -> None:
-    """Stacked bars: volume (ton) per supplier across periods."""
+    """Stacked bars: volume (ton) per entity across periods + total market outline."""
     import plotly.graph_objects as go
 
-    title = _format_compare_volume_chart_title(
-        material_type=material_type,
-        sale_channel=sale_channel,
-        period_mode=period_mode,
-        year_int=year_int,
-        period_caption=period_caption,
-    )
-    chart_card_title(title, large=True)
+    chart_card_title(chart_title, large=True)
     if metrics_df.empty or not period_labels:
         st.info(empty_message)
         return
 
     fig = go.Figure()
-    compare_bar_colors = build_supplier_compare_color_map(suppliers)
     bar_width = 0.72
-    for i, sup in enumerate(suppliers):
-        display_name = format_supplier_display_name(sup)
+    for entity in entities:
+        display_name = format_entity_name(entity)
         vols = _supplier_series_by_period(
-            metrics_df, supplier=sup, period_keys=period_keys, value_col="volume_ton"
+            metrics_df, supplier=entity, period_keys=period_keys, value_col="volume_ton"
         )
         fig.add_trace(
             go.Bar(
                 x=period_labels,
                 y=vols,
                 name=display_name,
-                marker_color=_supplier_color(compare_bar_colors, sup),
+                marker_color=_supplier_color(color_map, entity),
                 width=bar_width,
                 hovertemplate="%{x}<br>%{fullData.name}: %{y:,.1f} ton<extra></extra>",
             )
@@ -899,13 +980,13 @@ def render_supplier_compare_volume_chart(
             x=period_labels,
             y=market_tons,
             base=[0.0] * len(market_tons),
-            name="Total market volume",
+            name=total_market_label,
             marker_color="rgba(0,0,0,0)",
             marker_line_color="#E5E7EB",
             marker_line_width=1.6,
             width=bar_width,
             showlegend=True,
-            hovertemplate="%{x}<br>Total market: %{y:,.1f} ton<extra></extra>",
+            hovertemplate="%{x}<br>" + total_market_label + ": %{y:,.1f} ton<extra></extra>",
         )
     )
     fig.add_trace(
@@ -950,10 +1031,10 @@ def render_supplier_compare_volume_chart(
             tickfont=dict(size=14),
         ),
     )
-    st.plotly_chart(fig, use_container_width=True, key="sup_compare_volume_chart")
+    st.plotly_chart(fig, use_container_width=True, key=chart_key)
 
 
-def render_supplier_compare_share_chart(
+def render_supplier_compare_volume_chart(
     metrics_df: pd.DataFrame,
     *,
     suppliers: list[str],
@@ -965,31 +1046,120 @@ def render_supplier_compare_share_chart(
     year_int: int,
     sale_channel: str,
     period_caption: str,
-    empty_message: str = "No market share data for the selected suppliers.",
+    empty_message: str = "No volume data for the selected suppliers.",
 ) -> None:
-    """Multi-line chart: market share % per supplier across periods."""
-    import plotly.graph_objects as go
-
-    title = _format_compare_share_chart_title(
+    """Stacked bars: volume (ton) per supplier across periods."""
+    title = _format_compare_volume_chart_title(
         material_type=material_type,
         sale_channel=sale_channel,
         period_mode=period_mode,
         year_int=year_int,
         period_caption=period_caption,
     )
-    chart_card_title(title, large=True)
+    _render_compare_volume_chart(
+        metrics_df,
+        entities=suppliers,
+        period_labels=period_labels,
+        period_keys=period_keys,
+        chart_title=title,
+        format_entity_name=format_supplier_display_name,
+        color_map=build_supplier_compare_color_map(suppliers),
+        total_market_label="Total market volume",
+        chart_key="sup_compare_volume_chart",
+        empty_message=empty_message,
+    )
+
+
+def _format_compare_saler_volume_chart_title(
+    *,
+    supplier: str,
+    material_type: str,
+    sale_channel: str,
+    period_mode: str,
+    year_int: int,
+    period_caption: str,
+) -> str:
+    supplier_name = format_supplier_display_name(supplier)
+    mt_label = str(material_type).strip()
+    channel = str(sale_channel).strip()
+    if period_mode == "Yearly":
+        return f"Compare saler volume · {supplier_name} · {mt_label} · {period_caption}"
+    if period_mode == "Quarterly":
+        return (
+            f"Saler Volume Comparison: {supplier_name} · {mt_label} · {channel} "
+            f"(Quarterly {year_int})"
+        )
+    if period_mode == "Monthly":
+        return (
+            f"Saler Volume Comparison: {supplier_name} · {mt_label} · {channel} "
+            f"(Monthly {year_int})"
+        )
+    return f"Compare saler volume · {supplier_name} · {mt_label} · {period_caption}"
+
+
+def render_saler_compare_volume_chart(
+    metrics_df: pd.DataFrame,
+    *,
+    supplier: str,
+    salers: list[str],
+    period_labels: list[str],
+    period_keys: list[str],
+    material_type: str,
+    period_mode: str,
+    year_int: int,
+    sale_channel: str,
+    period_caption: str,
+    empty_message: str = "No volume data for the selected salers.",
+) -> None:
+    title = _format_compare_saler_volume_chart_title(
+        supplier=supplier,
+        material_type=material_type,
+        sale_channel=sale_channel,
+        period_mode=period_mode,
+        year_int=year_int,
+        period_caption=period_caption,
+    )
+    _render_compare_volume_chart(
+        metrics_df,
+        entities=salers,
+        period_labels=period_labels,
+        period_keys=period_keys,
+        chart_title=title,
+        format_entity_name=format_saler_display_name,
+        color_map=build_saler_compare_color_map(salers),
+        total_market_label="Total supplier volume",
+        chart_key="sup_saler_compare_volume_chart",
+        empty_message=empty_message,
+    )
+
+
+def _render_compare_share_chart(
+    metrics_df: pd.DataFrame,
+    *,
+    entities: list[str],
+    period_labels: list[str],
+    period_keys: list[str],
+    chart_title: str,
+    format_entity_name,
+    color_map: dict[str, str],
+    chart_key: str,
+    empty_message: str,
+) -> None:
+    """Multi-line chart: share % per entity across periods."""
+    import plotly.graph_objects as go
+
+    chart_card_title(chart_title, large=True)
     if metrics_df.empty or not period_labels:
         st.info(empty_message)
         return
 
     fig = go.Figure()
-    compare_colors = build_supplier_compare_color_map(suppliers)
-    for sup in suppliers:
-        display_name = format_supplier_display_name(sup)
+    for entity in entities:
+        display_name = format_entity_name(entity)
         shares = _supplier_series_by_period(
-            metrics_df, supplier=sup, period_keys=period_keys, value_col="share_pct"
+            metrics_df, supplier=entity, period_keys=period_keys, value_col="share_pct"
         )
-        line_color = _supplier_color(compare_colors, sup)
+        line_color = _supplier_color(color_map, entity)
         fig.add_trace(
             go.Scatter(
                 x=period_labels,
@@ -1003,9 +1173,13 @@ def render_supplier_compare_share_chart(
         )
 
     y_max = max(
-        [v for sup in suppliers for v in _supplier_series_by_period(
-            metrics_df, supplier=sup, period_keys=period_keys, value_col="share_pct"
-        )],
+        [
+            v
+            for entity in entities
+            for v in _supplier_series_by_period(
+                metrics_df, supplier=entity, period_keys=period_keys, value_col="share_pct"
+            )
+        ],
         default=0.0,
     )
     fig.update_layout(
@@ -1028,14 +1202,111 @@ def render_supplier_compare_share_chart(
         ),
         xaxis=dict(title="", showgrid=False, tickfont=dict(size=14)),
         yaxis=dict(
-            title=dict(text="Market share (%)", font=dict(size=14, color="#E5E7EB")),
+            title=dict(text="Share (%)", font=dict(size=14, color="#E5E7EB")),
             gridcolor="#374151",
             ticksuffix="%",
             tickfont=dict(size=14),
             range=[0, max(y_max * 1.2, 10.0)],
         ),
     )
-    st.plotly_chart(fig, use_container_width=True, key="sup_compare_share_chart")
+    st.plotly_chart(fig, use_container_width=True, key=chart_key)
+
+
+def render_supplier_compare_share_chart(
+    metrics_df: pd.DataFrame,
+    *,
+    suppliers: list[str],
+    period_labels: list[str],
+    period_keys: list[str],
+    material_type: str,
+    color_map: dict[str, str],
+    period_mode: str,
+    year_int: int,
+    sale_channel: str,
+    period_caption: str,
+    empty_message: str = "No market share data for the selected suppliers.",
+) -> None:
+    """Multi-line chart: market share % per supplier across periods."""
+    title = _format_compare_share_chart_title(
+        material_type=material_type,
+        sale_channel=sale_channel,
+        period_mode=period_mode,
+        year_int=year_int,
+        period_caption=period_caption,
+    )
+    _render_compare_share_chart(
+        metrics_df,
+        entities=suppliers,
+        period_labels=period_labels,
+        period_keys=period_keys,
+        chart_title=title,
+        format_entity_name=format_supplier_display_name,
+        color_map=build_supplier_compare_color_map(suppliers),
+        chart_key="sup_compare_share_chart",
+        empty_message=empty_message,
+    )
+
+
+def _format_compare_saler_share_chart_title(
+    *,
+    supplier: str,
+    material_type: str,
+    sale_channel: str,
+    period_mode: str,
+    year_int: int,
+    period_caption: str,
+) -> str:
+    supplier_name = format_supplier_display_name(supplier)
+    mt_label = str(material_type).strip()
+    channel = str(sale_channel).strip()
+    if period_mode == "Yearly":
+        return f"Compare saler share · {supplier_name} · {mt_label} · {period_caption}"
+    if period_mode == "Quarterly":
+        return (
+            f"Saler Share Comparison: {supplier_name} · {mt_label} · {channel} "
+            f"(Quarterly {year_int})"
+        )
+    if period_mode == "Monthly":
+        return (
+            f"Saler Share Comparison: {supplier_name} · {mt_label} · {channel} "
+            f"(Monthly {year_int})"
+        )
+    return f"Compare saler share · {supplier_name} · {mt_label} · {period_caption}"
+
+
+def render_saler_compare_share_chart(
+    metrics_df: pd.DataFrame,
+    *,
+    supplier: str,
+    salers: list[str],
+    period_labels: list[str],
+    period_keys: list[str],
+    material_type: str,
+    period_mode: str,
+    year_int: int,
+    sale_channel: str,
+    period_caption: str,
+    empty_message: str = "No share data for the selected salers.",
+) -> None:
+    title = _format_compare_saler_share_chart_title(
+        supplier=supplier,
+        material_type=material_type,
+        sale_channel=sale_channel,
+        period_mode=period_mode,
+        year_int=year_int,
+        period_caption=period_caption,
+    )
+    _render_compare_share_chart(
+        metrics_df,
+        entities=salers,
+        period_labels=period_labels,
+        period_keys=period_keys,
+        chart_title=title,
+        format_entity_name=format_saler_display_name,
+        color_map=build_saler_compare_color_map(salers),
+        chart_key="sup_saler_compare_share_chart",
+        empty_message=empty_message,
+    )
 
 
 def _volume_growth_pct(current: float, previous: float) -> float | None:
@@ -1127,40 +1398,33 @@ def _format_compare_growth_chart_title(
     return f"Supplier growth vs market · {mt_label} · {period_caption}"
 
 
-def render_supplier_compare_growth_chart(
+def _render_compare_growth_chart(
     growth_df: pd.DataFrame,
     *,
-    suppliers: list[str],
+    entities: list[str],
     growth_period_labels: list[str],
     growth_period_keys: list[str],
-    material_type: str,
-    period_mode: str,
-    year_int: int,
-    sale_channel: str,
-    period_caption: str,
-    empty_message: str = "Not enough periods to calculate growth vs market.",
+    chart_title: str,
+    format_entity_name,
+    color_map: dict[str, str],
+    benchmark_label: str,
+    entity_label: str,
+    chart_key: str,
+    footnote: str,
+    empty_message: str,
 ) -> None:
-    """Grouped diverging bars: supplier volume growth minus market growth (0 = market)."""
+    """Grouped diverging bars: entity volume growth minus benchmark growth (0 = benchmark)."""
     import plotly.graph_objects as go
 
-    title = _format_compare_growth_chart_title(
-        material_type=material_type,
-        sale_channel=sale_channel,
-        period_mode=period_mode,
-        year_int=year_int,
-        period_caption=period_caption,
-    )
-    chart_card_title(title, large=True)
+    chart_card_title(chart_title, large=True)
     if growth_df.empty or not growth_period_labels:
         st.info(empty_message)
         return
 
     fig = go.Figure()
-    compare_colors = build_supplier_compare_color_map(suppliers)
-
-    for sup in suppliers:
-        display_name = format_supplier_display_name(sup)
-        sub = growth_df[growth_df["supplier"] == sup].set_index("period")
+    for entity in entities:
+        display_name = format_entity_name(entity)
+        sub = growth_df[growth_df["supplier"] == entity].set_index("period")
         rel_vals: list[float | None] = []
         custom: list[str] = []
         for period in growth_period_keys:
@@ -1172,10 +1436,11 @@ def render_supplier_compare_growth_chart(
             row = sub.loc[key]
             rel = float(row["relative_growth_pct"])
             mkt = float(row["market_growth_pct"])
-            sup_g = float(row["supplier_growth_pct"])
+            ent_g = float(row["supplier_growth_pct"])
             rel_vals.append(rel)
             custom.append(
-                f"Market: {mkt:+.1f}%<br>Supplier: {sup_g:+.1f}%<br>vs market: {rel:+.1f}%"
+                f"{benchmark_label}: {mkt:+.1f}%<br>{entity_label}: {ent_g:+.1f}%<br>"
+                f"vs {benchmark_label.lower()}: {rel:+.1f}%"
             )
 
         fig.add_trace(
@@ -1183,7 +1448,7 @@ def render_supplier_compare_growth_chart(
                 x=growth_period_labels,
                 y=rel_vals,
                 name=display_name,
-                marker_color=_supplier_color(compare_colors, sup),
+                marker_color=_supplier_color(color_map, entity),
                 customdata=custom,
                 hovertemplate="%{x}<br>%{fullData.name}<br>%{customdata}<extra></extra>",
             )
@@ -1197,7 +1462,7 @@ def render_supplier_compare_growth_chart(
         y=0,
         line_color="#9CA3AF",
         line_width=1.6,
-        annotation_text="Market growth (0)",
+        annotation_text=f"{benchmark_label} growth (0)",
         annotation_position="right",
         annotation_font=dict(size=12, color="#9CA3AF"),
     )
@@ -1226,7 +1491,7 @@ def render_supplier_compare_growth_chart(
         xaxis=dict(title="", showgrid=False, tickfont=dict(size=14)),
         yaxis=dict(
             title=dict(
-                text="Growth vs market (pp)",
+                text=f"Growth vs {benchmark_label.lower()} (pp)",
                 font=dict(size=14, color="#E5E7EB"),
             ),
             gridcolor="#374151",
@@ -1236,11 +1501,118 @@ def render_supplier_compare_growth_chart(
             range=[-y_cap, y_cap],
         ),
     )
-    st.plotly_chart(fig, use_container_width=True, key="sup_compare_growth_chart")
-    chart_footnote(
-        "Each bar = supplier volume growth minus market volume growth vs the **previous period** "
-        "(year, quarter, or month). **Above 0** = grew faster than market; **below 0** = slower. "
-        "First period in the series has no prior period and is not shown."
+    st.plotly_chart(fig, use_container_width=True, key=chart_key)
+    chart_footnote(footnote)
+
+
+def render_supplier_compare_growth_chart(
+    growth_df: pd.DataFrame,
+    *,
+    suppliers: list[str],
+    growth_period_labels: list[str],
+    growth_period_keys: list[str],
+    material_type: str,
+    period_mode: str,
+    year_int: int,
+    sale_channel: str,
+    period_caption: str,
+    empty_message: str = "Not enough periods to calculate growth vs market.",
+) -> None:
+    """Grouped diverging bars: supplier volume growth minus market growth (0 = market)."""
+    title = _format_compare_growth_chart_title(
+        material_type=material_type,
+        sale_channel=sale_channel,
+        period_mode=period_mode,
+        year_int=year_int,
+        period_caption=period_caption,
+    )
+    _render_compare_growth_chart(
+        growth_df,
+        entities=suppliers,
+        growth_period_labels=growth_period_labels,
+        growth_period_keys=growth_period_keys,
+        chart_title=title,
+        format_entity_name=format_supplier_display_name,
+        color_map=build_supplier_compare_color_map(suppliers),
+        benchmark_label="Market",
+        entity_label="Supplier",
+        chart_key="sup_compare_growth_chart",
+        footnote=(
+            "Each bar = supplier volume growth minus market volume growth vs the **previous period** "
+            "(year, quarter, or month). **Above 0** = grew faster than market; **below 0** = slower. "
+            "First period in the series has no prior period and is not shown."
+        ),
+        empty_message=empty_message,
+    )
+
+
+def _format_compare_saler_growth_chart_title(
+    *,
+    supplier: str,
+    material_type: str,
+    sale_channel: str,
+    period_mode: str,
+    year_int: int,
+    period_caption: str,
+) -> str:
+    supplier_name = format_supplier_display_name(supplier)
+    mt_label = str(material_type).strip()
+    channel = str(sale_channel).strip()
+    if period_mode == "Yearly":
+        return f"Saler growth vs supplier · {supplier_name} · {mt_label} · {period_caption}"
+    if period_mode == "Quarterly":
+        return (
+            f"Saler Growth vs Supplier: {supplier_name} · {mt_label} · {channel} "
+            f"(Quarterly {year_int})"
+        )
+    if period_mode == "Monthly":
+        return (
+            f"Saler Growth vs Supplier: {supplier_name} · {mt_label} · {channel} "
+            f"(Monthly {year_int})"
+        )
+    return f"Saler growth vs supplier · {supplier_name} · {mt_label} · {period_caption}"
+
+
+def render_saler_compare_growth_chart(
+    growth_df: pd.DataFrame,
+    *,
+    supplier: str,
+    salers: list[str],
+    growth_period_labels: list[str],
+    growth_period_keys: list[str],
+    material_type: str,
+    period_mode: str,
+    year_int: int,
+    sale_channel: str,
+    period_caption: str,
+    empty_message: str = "Not enough periods to calculate growth vs supplier total.",
+) -> None:
+    title = _format_compare_saler_growth_chart_title(
+        supplier=supplier,
+        material_type=material_type,
+        sale_channel=sale_channel,
+        period_mode=period_mode,
+        year_int=year_int,
+        period_caption=period_caption,
+    )
+    _render_compare_growth_chart(
+        growth_df,
+        entities=salers,
+        growth_period_labels=growth_period_labels,
+        growth_period_keys=growth_period_keys,
+        chart_title=title,
+        format_entity_name=format_saler_display_name,
+        color_map=build_saler_compare_color_map(salers),
+        benchmark_label="Supplier total",
+        entity_label="Saler",
+        chart_key="sup_saler_compare_growth_chart",
+        footnote=(
+            "Each bar = saler volume growth minus **total supplier** volume growth vs the "
+            "**previous period** (year, quarter, or month). **Above 0** = grew faster than the "
+            "supplier total; **below 0** = slower. First period in the series has no prior period "
+            "and is not shown."
+        ),
+        empty_message=empty_message,
     )
 
 
@@ -1322,6 +1694,97 @@ def render_supplier_compare_dashboard(
     render_supplier_compare_growth_chart(
         growth_df,
         suppliers=suppliers,
+        growth_period_labels=growth_period_labels,
+        growth_period_keys=growth_period_keys,
+        material_type=material_type,
+        period_mode=period_mode,
+        year_int=year_int,
+        sale_channel=sale_channel,
+        period_caption=period_caption,
+    )
+
+
+def render_saler_compare_dashboard(
+    df: pd.DataFrame,
+    *,
+    selected_supplier: str,
+    material_type: str,
+    salers: list[str],
+    type_col: str,
+    supplier_col: str,
+    period_mode: str,
+    year_int: int,
+    sale_channel: str,
+) -> None:
+    """Compare salers within one sidebar supplier — same charts as Compare suppliers."""
+    supplier_name = format_supplier_display_name(selected_supplier)
+    if period_mode == "Yearly":
+        period_col = "year"
+        period_order = None
+        year_filter = None
+        period_caption = f"{supplier_name} · {sale_channel} · all years"
+    elif period_mode == "Quarterly":
+        period_col = "quarter"
+        period_order = QUARTER_ORDER
+        year_filter = year_int
+        period_caption = f"{supplier_name} · {sale_channel} · {year_int}"
+    else:
+        period_col = "month"
+        period_order = MONTH_ORDER
+        year_filter = year_int
+        period_caption = f"{supplier_name} · {sale_channel} · {year_int}"
+
+    metrics_df, period_keys, period_labels = build_multi_saler_period_metrics(
+        df,
+        selected_supplier=selected_supplier,
+        material_type=material_type,
+        salers=salers,
+        type_col=type_col,
+        supplier_col=supplier_col,
+        period_col=period_col,
+        period_order=period_order,
+        year_filter=year_filter,
+    )
+    if metrics_df.empty:
+        st.warning("No comparison data for the selected filters and salers.")
+        return
+
+    render_saler_compare_volume_chart(
+        metrics_df,
+        supplier=selected_supplier,
+        salers=salers,
+        period_labels=period_labels,
+        period_keys=period_keys,
+        material_type=material_type,
+        period_mode=period_mode,
+        year_int=year_int,
+        sale_channel=sale_channel,
+        period_caption=period_caption,
+    )
+    render_saler_compare_share_chart(
+        metrics_df,
+        supplier=selected_supplier,
+        salers=salers,
+        period_labels=period_labels,
+        period_keys=period_keys,
+        material_type=material_type,
+        period_mode=period_mode,
+        year_int=year_int,
+        sale_channel=sale_channel,
+        period_caption=period_caption,
+    )
+
+    growth_df = build_supplier_growth_vs_market_data(
+        metrics_df,
+        suppliers=salers,
+        period_keys=period_keys,
+    )
+    growth_period_keys = period_keys[1:] if len(period_keys) > 1 else []
+    growth_period_labels = period_labels[1:] if len(period_labels) > 1 else []
+    render_saler_compare_growth_chart(
+        growth_df,
+        supplier=selected_supplier,
+        salers=salers,
         growth_period_labels=growth_period_labels,
         growth_period_keys=growth_period_keys,
         material_type=material_type,
@@ -2591,6 +3054,208 @@ def build_supplier_top_salers_data(
         )
 
     return pd.DataFrame(rows), n_salers
+
+
+def build_supplier_top_saler_select_options(
+    df: pd.DataFrame,
+    *,
+    top_n: int,
+) -> tuple[list[str], list[str]]:
+    """Return (raw_saler_names, display_labels) ranked by volume in scope."""
+    if df.empty or "saler" not in df.columns or "volume_ton" not in df.columns:
+        return [], []
+
+    work = df.copy()
+    work["saler"] = work["saler"].fillna("").astype(str).str.strip()
+    work = work[work["saler"] != ""]
+    if work.empty:
+        return [], []
+
+    ranked = (
+        work.groupby("saler", dropna=False)["volume_ton"]
+        .sum()
+        .sort_values(ascending=False)
+    )
+    raw_names = ranked.head(top_n).index.astype(str).tolist()
+    display = [format_saler_display_name(name) for name in raw_names]
+    return raw_names, display
+
+
+def build_supplier_saler_customer_stack_data(
+    df: pd.DataFrame,
+    *,
+    top_salers: int,
+    top_customers_per_saler: int,
+    others_label: str = "Others",
+    selected_saler_raw: str | None = None,
+) -> pd.DataFrame:
+    """
+    Long format for stacked saler → customer volume chart.
+    One row per (saler, customer) segment; top customers per saler + Others.
+    """
+    empty = pd.DataFrame(columns=["saler_label", "customer_label", "volume_ton"])
+    if df.empty or "saler" not in df.columns or "volume_ton" not in df.columns:
+        return empty
+
+    work = df.copy()
+    work["saler"] = work["saler"].fillna("").astype(str).str.strip()
+    work = work[work["saler"] != ""]
+    if work.empty:
+        return empty
+
+    ranked = (
+        work.groupby("saler", dropna=False)["volume_ton"]
+        .sum()
+        .sort_values(ascending=False)
+    )
+    saler_names = ranked.head(top_salers).index.astype(str).tolist()
+    if selected_saler_raw:
+        sel = str(selected_saler_raw).strip()
+        if sel in ranked.index.astype(str):
+            saler_names = [sel]
+
+    rows: list[dict[str, object]] = []
+    for saler in saler_names:
+        saler_df = work[work["saler"] == saler]
+        cust_df, _ = build_supplier_top_customers_data(
+            saler_df,
+            top_n=top_customers_per_saler,
+            others_label=others_label,
+        )
+        if cust_df.empty:
+            continue
+        saler_label = format_saler_display_name(saler)
+        for _, row in cust_df.iterrows():
+            rows.append(
+                {
+                    "saler_label": saler_label,
+                    "customer_label": str(row["customer_label"]),
+                    "volume_ton": float(row["volume_ton"]),
+                }
+            )
+
+    if not rows:
+        return empty
+    return pd.DataFrame(rows)
+
+
+def render_supplier_saler_customer_stack_chart(
+    df: pd.DataFrame,
+    *,
+    supplier: str,
+    material_type: str,
+    sale_channel: str,
+    period_caption: str,
+    top_salers: int,
+    top_customers_per_saler: int,
+    selected_saler_raw: str | None = None,
+    chart_key: str = "sup_saler_customer_stack",
+    empty_message: str = "No saler → customer volume for this period.",
+) -> None:
+    """Stacked bars: each saler (x) split by top customer volumes in the period."""
+    import plotly.express as px
+
+    from config.settings import SUPPLIER_TOP_CUSTOMERS_OTHERS_LABEL
+
+    supplier_name = format_supplier_display_name(supplier)
+    mt_label = str(material_type).strip()
+    stack_df = build_supplier_saler_customer_stack_data(
+        df,
+        top_salers=top_salers,
+        top_customers_per_saler=top_customers_per_saler,
+        others_label=SUPPLIER_TOP_CUSTOMERS_OTHERS_LABEL,
+        selected_saler_raw=selected_saler_raw,
+    )
+
+    chart_card_title(f"Saler sales by customer · {period_caption}", large=True)
+    focus = (
+        format_saler_display_name(selected_saler_raw)
+        if selected_saler_raw
+        else f"Top {top_salers} salers"
+    )
+    st.caption(
+        f"{supplier_name} · {mt_label} · {sale_channel} · {focus} · "
+        f"Top {top_customers_per_saler} customers per saler"
+    )
+
+    if stack_df.empty:
+        st.info(empty_message)
+        return
+
+    saler_order = (
+        stack_df.groupby("saler_label")["volume_ton"]
+        .sum()
+        .sort_values(ascending=False)
+        .index.tolist()
+    )
+    customer_order = (
+        stack_df.groupby("customer_label")["volume_ton"]
+        .sum()
+        .sort_values(ascending=False)
+        .index.tolist()
+    )
+    if SUPPLIER_TOP_CUSTOMERS_OTHERS_LABEL in customer_order:
+        customer_order = [
+            c for c in customer_order if c != SUPPLIER_TOP_CUSTOMERS_OTHERS_LABEL
+        ] + [SUPPLIER_TOP_CUSTOMERS_OTHERS_LABEL]
+
+    color_map: dict[str, str] = {}
+    rank_idx = 0
+    for cust in customer_order:
+        if cust == SUPPLIER_TOP_CUSTOMERS_OTHERS_LABEL:
+            color_map[cust] = CUSTOMER_RANK_OTHERS_COLOR
+        else:
+            color_map[cust] = CUSTOMER_COMPARE_FALLBACK_COLORS[
+                rank_idx % len(CUSTOMER_COMPARE_FALLBACK_COLORS)
+            ]
+            rank_idx += 1
+
+    fig = px.bar(
+        stack_df,
+        x="saler_label",
+        y="volume_ton",
+        color="customer_label",
+        category_orders={
+            "saler_label": saler_order,
+            "customer_label": customer_order,
+        },
+        color_discrete_map=color_map,
+        labels={
+            "saler_label": "Saler",
+            "volume_ton": "Volume (ton)",
+            "customer_label": "Customer",
+        },
+    )
+    fig.update_layout(
+        barmode="stack",
+        height=max(360, 120 + 56 * len(saler_order)),
+        margin=dict(l=12, r=140, t=12, b=40),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#E5E7EB", family="Segoe UI", size=11),
+        template="plotly_dark",
+        legend=dict(
+            title="Customer",
+            orientation="v",
+            yanchor="top",
+            y=1.0,
+            xanchor="left",
+            x=1.02,
+            font=dict(size=10, color="#E5E7EB"),
+            bgcolor="rgba(27, 31, 35, 0.85)",
+            bordercolor="#374151",
+            borderwidth=1,
+        ),
+        xaxis=dict(tickangle=-25 if len(saler_order) > 3 else 0),
+        yaxis=dict(title="Volume (ton)", tickformat=","),
+    )
+    fig.update_traces(
+        hovertemplate=(
+            "Saler: %{x}<br>Customer: %{fullData.name}<br>"
+            "Volume: %{y:,.1f} ton<extra></extra>"
+        ),
+    )
+    st.plotly_chart(fig, use_container_width=True, key=chart_key)
 
 
 def build_supplier_type_sale_share_data(

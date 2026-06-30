@@ -20,13 +20,16 @@ from ui.chart_volume import (
     MONTH_DISPLAY,
     build_supplier_customer_new_current_data,
     build_supplier_top_customers_data,
+    build_supplier_top_saler_select_options,
     build_supplier_top_salers_data,
     format_dataset_year_range,
     render_monthly_supplier_market_volume_chart,
     render_quarterly_supplier_market_volume_chart,
     render_supplier_compare_dashboard,
+    render_saler_compare_dashboard,
     render_supplier_customer_new_current_stacked_chart,
     render_supplier_period_customer_volume_chart,
+    render_supplier_saler_customer_stack_chart,
     render_supplier_top_customers_chart,
     render_supplier_top_salers_chart,
     render_supplier_type_sale_pie_chart,
@@ -46,6 +49,8 @@ from ui.theme import (
 )
 
 PERIOD_MODES = ["Yearly", "Quarterly", "Monthly"]
+ALL_TOP_SALERS_OPTION = "— All top salers —"
+SALER_COMPARE_TOP_N = 50
 
 
 def _month_to_quarter(month: str) -> str:
@@ -332,18 +337,45 @@ def _type_sale_period_caption(
     return f"Year {year_int}"
 
 
+def _compare_salers_period_scope(
+    df_channel: pd.DataFrame,
+    *,
+    salers: list[str],
+    supplier: str,
+    supplier_col: str,
+    material_type: str,
+    type_col: str,
+    period_mode: str,
+    year_int: int,
+) -> pd.DataFrame:
+    """Rows for compared salers within one supplier across the compare period."""
+    saler_set = {str(s).strip() for s in salers}
+    sel = str(supplier).strip().casefold()
+    scoped = df_channel[
+        df_channel[supplier_col].astype(str).str.strip().str.casefold() == sel
+    ]
+    scoped = filter_by_material_type(scoped, material_type, type_col=type_col)
+    if "saler" in scoped.columns:
+        scoped = scoped[scoped["saler"].astype(str).str.strip().isin(saler_set)]
+    if period_mode != "Yearly" and "year" in scoped.columns:
+        scoped = scoped[pd.to_numeric(scoped["year"], errors="coerce") == year_int]
+    return scoped.copy()
+
+
 def _render_view_mode_controls(
     suppliers: list[str],
     primary_supplier: str,
-) -> tuple[str, list[str]]:
-    """Single-supplier deep dive vs multi-supplier compare mode."""
+    saler_options: list[str],
+) -> tuple[str, list[str], list[str]]:
+    """Single-supplier deep dive, compare suppliers, or compare salers within one supplier."""
     view_mode = st.radio(
         "View",
-        ["Single supplier", "Compare suppliers"],
+        ["Single supplier", "Compare suppliers", "Compare salers"],
         horizontal=True,
         key="sup_view_mode",
     )
     compare_suppliers: list[str] = []
+    compare_salers: list[str] = []
     if view_mode == "Compare suppliers":
         defaults: list[str] = []
         if primary_supplier in suppliers:
@@ -361,7 +393,24 @@ def _render_view_mode_controls(
         )
         if len(compare_suppliers) < 2:
             st.info("Select at least **2 suppliers** to compare volume and market share.")
-    return view_mode, compare_suppliers
+    elif view_mode == "Compare salers":
+        saler_defaults: list[str] = []
+        for name in saler_options:
+            saler_defaults.append(name)
+            if len(saler_defaults) >= 2:
+                break
+        compare_salers = st.multiselect(
+            "Salers to compare",
+            saler_options,
+            default=saler_defaults[: min(2, len(saler_defaults))],
+            format_func=format_saler_display_name,
+            key="sup_compare_salers",
+        )
+        if len(compare_salers) < 2:
+            st.info("Select at least **2 salers** to compare volume and share.")
+        elif not saler_options:
+            st.warning("No salers found for the selected supplier and filters.")
+    return view_mode, compare_suppliers, compare_salers
 
 
 def _render_top_customers_n_control() -> int:
@@ -372,6 +421,129 @@ def _render_top_customers_n_control() -> int:
             format_func=lambda n: f"Top {n}",
             key="sup_top_customers_n",
         )
+    )
+
+
+def _period_customer_volume_scope(
+    *,
+    period_mode: str,
+    period_scope: pd.DataFrame,
+    year_supplier_scope: pd.DataFrame,
+    selected_quarter: str | None,
+    selected_month: str | None,
+) -> pd.DataFrame:
+    """Rows for the customer-volume / saler-breakdown charts (matches Period sub-select)."""
+    if period_mode == "Quarterly" and selected_quarter:
+        return _filter_quarter_scope(year_supplier_scope, selected_quarter)
+    if period_mode == "Monthly" and selected_month:
+        return _filter_month_scope(year_supplier_scope, selected_month)
+    return period_scope
+
+
+def _period_volume_chart_label(
+    *,
+    period_mode: str,
+    year_int: int,
+    period_label: str,
+    selected_quarter: str | None,
+    selected_month: str | None,
+) -> tuple[str, str]:
+    """Return (customer_volume_period_label, stack_chart_caption) for the active period."""
+    if period_mode == "Yearly":
+        return "Year", f"Year {year_int}"
+    if period_mode == "Quarterly" and selected_quarter:
+        q = str(selected_quarter).upper()
+        return q, f"{year_int} · {q}"
+    if period_mode == "Monthly" and selected_month:
+        m = _month_display_label(selected_month)
+        return m, f"{year_int} · {m}"
+    return f"Year {year_int}", period_label
+
+
+def _render_saler_customer_stack_section(
+    period_df: pd.DataFrame,
+    *,
+    supplier: str,
+    material_type: str,
+    sale_channel: str,
+    period_caption: str,
+    top_n: int,
+    period_key_suffix: str,
+) -> None:
+    """Top-saler selectbox + stacked bar (saler → top customers) below customer volume chart."""
+    raw_names, display_labels = build_supplier_top_saler_select_options(period_df, top_n=top_n)
+    if not display_labels:
+        st.caption("No salers in this period.")
+        return
+
+    select_key = f"sup_top_saler_select_{period_key_suffix}"
+    options = [ALL_TOP_SALERS_OPTION, *display_labels]
+    selected_label = st.selectbox(
+        "Top saler",
+        options,
+        key=select_key,
+        help="Salers ranked by volume in the selected period. Choose one or view all on the chart.",
+    )
+
+    selected_raw: str | None = None
+    if selected_label != ALL_TOP_SALERS_OPTION:
+        try:
+            idx = display_labels.index(selected_label)
+            selected_raw = raw_names[idx]
+        except ValueError:
+            selected_raw = None
+
+    chart_key = (
+        f"sup_saler_cust_stack_{period_key_suffix}_"
+        f"{selected_label.replace(' ', '_').replace('—', 'all')}"
+    )
+    render_supplier_saler_customer_stack_chart(
+        period_df,
+        supplier=supplier,
+        material_type=material_type,
+        sale_channel=sale_channel,
+        period_caption=period_caption,
+        top_salers=top_n,
+        top_customers_per_saler=top_n,
+        selected_saler_raw=selected_raw,
+        chart_key=chart_key,
+        empty_message="No saler → customer volume for this supplier and period.",
+    )
+
+
+def _render_period_customer_volume_and_saler_stack(
+    volume_scope: pd.DataFrame,
+    *,
+    supplier: str,
+    material_type: str,
+    sale_channel: str,
+    year_int: int,
+    volume_period_label: str,
+    stack_period_caption: str,
+    top_n: int,
+    period_key_suffix: str,
+    chart_key: str,
+) -> None:
+    """Customer volume ranked bars, then top-saler picker and saler→customer stack chart."""
+    render_supplier_period_customer_volume_chart(
+        volume_scope,
+        supplier=supplier,
+        material_type=material_type,
+        sale_channel=sale_channel,
+        year_int=year_int,
+        period_label=volume_period_label,
+        top_n=top_n,
+        chart_key=chart_key,
+        empty_message="No customer volume for this supplier and period.",
+    )
+    _render_saler_customer_stack_section(
+        volume_scope,
+        supplier=supplier,
+        material_type=material_type,
+        sale_channel=sale_channel,
+        period_caption=stack_period_caption,
+        top_n=top_n,
+        period_key_suffix=period_key_suffix,
     )
 
 
@@ -443,17 +615,6 @@ def render_supplier_page(df: pd.DataFrame, dataset_label: str) -> None:
     if supplier not in suppliers:
         supplier = suppliers[0] if suppliers else supplier
 
-    render_analysis_chip_row(
-        dataset_label=dataset_label,
-        sale_channel=sale_channel,
-        sale_channel_options=SALE_CHANNEL_FILTER_OPTIONS,
-        year=year,
-        supplier=supplier,
-        show_supplier=st.session_state.get("sup_view_mode", "Single supplier") != "Compare suppliers",
-        type_sale=type_sale,
-        show_type_sale=True,
-    )
-
     year_int = int(year)
     type_col = resolve_type_column(df)
     df_channel = prepare_supplier_analysis_frame(
@@ -464,6 +625,26 @@ def render_supplier_page(df: pd.DataFrame, dataset_label: str) -> None:
         type_col=type_col,
         supplier_col=supplier_col,
     )
+    supplier_rows = df_channel[
+        df_channel[supplier_col].astype(str).str.strip().str.casefold()
+        == str(supplier).strip().casefold()
+    ]
+    saler_options, _ = build_supplier_top_saler_select_options(
+        supplier_rows,
+        top_n=SALER_COMPARE_TOP_N,
+    )
+
+    render_analysis_chip_row(
+        dataset_label=dataset_label,
+        sale_channel=sale_channel,
+        sale_channel_options=SALE_CHANNEL_FILTER_OPTIONS,
+        year=year,
+        supplier=supplier,
+        show_supplier=st.session_state.get("sup_view_mode", "Single supplier") == "Single supplier",
+        type_sale=type_sale,
+        show_type_sale=True,
+    )
+
     df_channel_pie = prepare_supplier_analysis_frame(
         filter_by_type_sale(df, TYPE_SALE_FILTER_ALL),
         dataset_label=dataset_label,
@@ -481,15 +662,27 @@ def render_supplier_page(df: pd.DataFrame, dataset_label: str) -> None:
         year_int=year_int,
     )
 
-    view_mode, compare_suppliers = _render_view_mode_controls(suppliers, supplier)
-    compare_mode = view_mode == "Compare suppliers" and len(compare_suppliers) >= 2
+    view_mode, compare_suppliers, compare_salers = _render_view_mode_controls(
+        suppliers,
+        supplier,
+        saler_options,
+    )
+    compare_suppliers_mode = (
+        view_mode == "Compare suppliers" and len(compare_suppliers) >= 2
+    )
+    compare_salers_mode = view_mode == "Compare salers" and len(compare_salers) >= 2
+    any_compare_mode = compare_suppliers_mode or compare_salers_mode
 
     period_mode, period_label, selected_quarter, selected_month = _render_period_controls(
         year=year,
         year_supplier_scope=top_customers_scope,
-        hide_sub_period=view_mode == "Compare suppliers",
+        hide_sub_period=any_compare_mode,
     )
-    top_customers_n = _render_top_customers_n_control() if not compare_mode else SUPPLIER_TOP_CUSTOMER_OPTIONS[0]
+    top_customers_n = (
+        _render_top_customers_n_control()
+        if not any_compare_mode
+        else SUPPLIER_TOP_CUSTOMER_OPTIONS[0]
+    )
 
     period_scope = _supplier_period_scope(
         df_channel,
@@ -537,7 +730,7 @@ def render_supplier_page(df: pd.DataFrame, dataset_label: str) -> None:
     top_saler_pct = float(top_saler_row["share_pct"]) if top_saler_row is not None else 0.0
     top_saler_name = str(top_saler_row["saler_label"]) if top_saler_row is not None else "—"
 
-    if not compare_mode:
+    if not any_compare_mode:
         m1, m2, m3, m4, m5 = st.columns(5)
         with m1:
             if period_mode == "Yearly":
@@ -602,7 +795,8 @@ def render_supplier_page(df: pd.DataFrame, dataset_label: str) -> None:
         top_customers_n,
         selected_quarter or "",
         selected_month or "",
-        tuple(compare_suppliers) if compare_mode else (),
+        tuple(compare_suppliers) if compare_suppliers_mode else (),
+        tuple(compare_salers) if compare_salers_mode else (),
     )
     if st.session_state.get("sup_filter_sig") != filter_sig:
         st.session_state["sup_filter_sig"] = filter_sig
@@ -640,8 +834,23 @@ def render_supplier_page(df: pd.DataFrame, dataset_label: str) -> None:
         top_n=top_customers_n,
         period_caption=top_salers_period_caption,
     )
+    volume_period_label, stack_period_caption = _period_volume_chart_label(
+        period_mode=period_mode,
+        year_int=year_int,
+        period_label=period_label,
+        selected_quarter=selected_quarter,
+        selected_month=selected_month,
+    )
+    period_key_suffix = (
+        f"{period_mode}_{year_int}_{selected_quarter or 'all'}_{selected_month or 'all'}_{top_customers_n}"
+    )
+    show_period_volume_charts = (
+        period_mode == "Yearly"
+        or (period_mode == "Quarterly" and selected_quarter)
+        or (period_mode == "Monthly" and selected_month)
+    )
 
-    if compare_mode:
+    if compare_suppliers_mode:
         render_supplier_compare_dashboard(
             df_channel,
             material_type=material_type,
@@ -652,6 +861,18 @@ def render_supplier_page(df: pd.DataFrame, dataset_label: str) -> None:
             year_int=year_int,
             sale_channel=sale_channel,
             supplier_color_map=supplier_colors,
+        )
+    elif compare_salers_mode:
+        render_saler_compare_dashboard(
+            df_channel,
+            selected_supplier=supplier,
+            material_type=material_type,
+            salers=compare_salers,
+            type_col=type_col,
+            supplier_col=supplier_col,
+            period_mode=period_mode,
+            year_int=year_int,
+            sale_channel=sale_channel,
         )
     else:
         col_volume, col_top_customers = st.columns([1.35, 1])
@@ -682,17 +903,6 @@ def render_supplier_page(df: pd.DataFrame, dataset_label: str) -> None:
                     empty_message="No repeat or new-to-supplier customer data for these filters.",
                     chart_key="sup_year_customer_new_current",
                 )
-                render_supplier_period_customer_volume_chart(
-                    period_scope,
-                    supplier=supplier,
-                    material_type=material_type,
-                    sale_channel=sale_channel,
-                    year_int=year_int,
-                    period_label="Year",
-                    top_n=top_customers_n,
-                    chart_key=f"sup_year_customer_volume_{year_int}",
-                    empty_message="No customer volume for this supplier and year.",
-                )
             elif period_mode == "Quarterly":
                 render_quarterly_supplier_market_volume_chart(
                     df_channel,
@@ -720,19 +930,6 @@ def render_supplier_page(df: pd.DataFrame, dataset_label: str) -> None:
                     empty_message="No repeat or new-to-supplier customer data for these filters.",
                     chart_key="sup_quarter_customer_new_current",
                 )
-                if selected_quarter:
-                    quarter_scope = _filter_quarter_scope(top_customers_scope, selected_quarter)
-                    render_supplier_period_customer_volume_chart(
-                        quarter_scope,
-                        supplier=supplier,
-                        material_type=material_type,
-                        sale_channel=sale_channel,
-                        year_int=year_int,
-                        period_label=str(selected_quarter).upper(),
-                        top_n=top_customers_n,
-                        chart_key=f"sup_quarter_customer_volume_{selected_quarter}_{year_int}",
-                        empty_message="No customer volume for this supplier and quarter.",
-                    )
             else:
                 render_monthly_supplier_market_volume_chart(
                     df_channel,
@@ -760,19 +957,26 @@ def render_supplier_page(df: pd.DataFrame, dataset_label: str) -> None:
                     empty_message="No repeat or new-to-supplier customer data for these filters.",
                     chart_key="sup_month_customer_new_current",
                 )
-                if selected_month:
-                    month_scope = _filter_month_scope(top_customers_scope, selected_month)
-                    render_supplier_period_customer_volume_chart(
-                        month_scope,
-                        supplier=supplier,
-                        material_type=material_type,
-                        sale_channel=sale_channel,
-                        year_int=year_int,
-                        period_label=_month_display_label(selected_month),
-                        top_n=top_customers_n,
-                        chart_key=f"sup_month_customer_volume_{selected_month}_{year_int}",
-                        empty_message="No customer volume for this supplier and month.",
-                    )
+            if show_period_volume_charts:
+                volume_period_df = _period_customer_volume_scope(
+                    period_mode=period_mode,
+                    period_scope=period_scope,
+                    year_supplier_scope=top_customers_scope,
+                    selected_quarter=selected_quarter,
+                    selected_month=selected_month,
+                )
+                _render_period_customer_volume_and_saler_stack(
+                    volume_period_df,
+                    supplier=supplier,
+                    material_type=material_type,
+                    sale_channel=sale_channel,
+                    year_int=year_int,
+                    volume_period_label=volume_period_label,
+                    stack_period_caption=stack_period_caption,
+                    top_n=top_customers_n,
+                    period_key_suffix=period_key_suffix,
+                    chart_key=f"sup_period_customer_volume_{period_key_suffix}",
+                )
         with col_top_customers:
             render_supplier_type_sale_pie_chart(
                 type_sale_pie_scope,
@@ -786,7 +990,7 @@ def render_supplier_page(df: pd.DataFrame, dataset_label: str) -> None:
             render_supplier_top_salers_chart(**top_salers_kwargs, side_panel=True)
 
     if st.session_state.get("show_detail_data", False):
-        if compare_mode:
+        if compare_suppliers_mode:
             detail_scope = _compare_suppliers_period_scope(
                 df_channel,
                 suppliers=compare_suppliers,
@@ -798,6 +1002,26 @@ def render_supplier_page(df: pd.DataFrame, dataset_label: str) -> None:
             )
             supplier_label = ", ".join(
                 format_supplier_display_name(s) for s in compare_suppliers
+            )
+            detail_period_label = _compare_period_detail_label(
+                period_mode,
+                year_int,
+                scope=detail_scope,
+            )
+        elif compare_salers_mode:
+            detail_scope = _compare_salers_period_scope(
+                df_channel,
+                salers=compare_salers,
+                supplier=supplier,
+                supplier_col=supplier_col,
+                material_type=material_type,
+                type_col=type_col,
+                period_mode=period_mode,
+                year_int=year_int,
+            )
+            supplier_label = (
+                f"{format_supplier_display_name(supplier)} · "
+                + ", ".join(format_saler_display_name(s) for s in compare_salers)
             )
             detail_period_label = _compare_period_detail_label(
                 period_mode,
@@ -826,5 +1050,5 @@ def render_supplier_page(df: pd.DataFrame, dataset_label: str) -> None:
                 ),
                 export_filename="supplier_shipment_detail.csv",
             )
-    elif not compare_mode:
+    elif not any_compare_mode:
         st.info("Shipment detail is hidden. Enable **Show detail data** in the left sidebar.")
